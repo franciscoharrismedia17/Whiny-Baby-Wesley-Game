@@ -169,7 +169,6 @@ let timerActive = false;
 let shakeTimer = 0;
 let shakeIntensity = 0;
 let shakeDuration = 0;
-let leadShownThisSession = false;
 
 // UI button rectangles
 let startButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 500, h: 200 };
@@ -313,7 +312,6 @@ function resetGame(){
   bedtimeSeconds = 30;
   timerActive = false;
   loseVideoActive = false;
-  leadShownThisSession = false;
   currentDrag = null;
   interactables.forEach(obj => {
     obj.x = obj.homeX;
@@ -688,11 +686,6 @@ function mousePressed(){
     return;
   }
   if (currentState === STATE_PLAY){
-    if (!leadShownThisSession && shouldShowLeadDesktop()){
-      leadShownThisSession = true;
-      enterLeadDesktop();
-      return;
-    }
     for (const obj of interactables){
       if (over(obj, mouseX, mouseY)){
         currentDrag = obj;
@@ -770,7 +763,6 @@ function getBabyHitbox(){
 
 function enterStateMenu(){
   cursor(ARROW);
-  leadShownThisSession = false;
   if (!assetsLoading){
     loadingMessageVisible = false;
   }
@@ -855,7 +847,8 @@ function onLoseVideoEnded(){
 
 // Lead generation implementation
 const LEAD_STORAGE_KEY = 'wbw_lead_data_v1';
-const LEAD_ENDPOINT = 'https://script.google.com/macros/s/YOUR_ENDPOINT_ID/exec';
+const LEAD_SUBMITTED_KEY = 'wbw_lead_submitted_v1';
+const LEAD_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxDzVhcizXvcVpe3iYHhT_w64gRG6EUVGscVmxWj9vkpZzg2yu4ZRGayMf56EEN68pl/exec';
 let leadOverlay = null;
 let leadForm = null;
 let leadError = null;
@@ -985,17 +978,11 @@ function exitLeadDesktopAndGoTutorial(){
   if (leadOverlay){
     leadOverlay.style.display = 'none';
   }
-  try {
-    if (!localStorage.getItem(LEAD_STORAGE_KEY)){
-      localStorage.setItem(LEAD_STORAGE_KEY, 'dismissed');
-    }
-  } catch (e) {
-    /* no-op */
-  }
   leadPending = false;
   if (leadSubmitButton) leadSubmitButton.disabled = false;
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
-  startRequested = true;
+  if (leadError) leadError.textContent = '';
+  if (leadSuccess) leadSuccess.textContent = '';
   startGame();
 }
 
@@ -1022,23 +1009,30 @@ function onLeadSubmit(event){
   const payload = { firstName, lastName, email, timestamp: new Date().toISOString() };
   sendLeadToSheet(payload)
     .then(() => {
-      leadSuccess.textContent = '¡Listo! Revisá tu correo pronto.';
+      try {
+        localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
+      } catch (e) {
+        /* no-op */
+      }
       try {
         localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
       } catch (e) {
         /* no-op */
       }
-      leadPending = false;
-      leadSubmitButton.disabled = false;
-      if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
-      setTimeout(() => exitLeadDesktopAndGoTutorial(), 800);
+      exitLeadDesktopAndGoTutorial();
     })
     .catch(() => {
-      leadError.textContent = 'Ups, falló el envío. Intentá de nuevo.';
-      leadSuccess.textContent = '';
-      leadSubmitButton.disabled = false;
-      leadPending = false;
-      if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
+      try {
+        localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
+      } catch (e) {
+        /* no-op */
+      }
+      try {
+        localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
+      } catch (e) {
+        /* no-op */
+      }
+      exitLeadDesktopAndGoTutorial();
     });
 }
 
@@ -1062,8 +1056,19 @@ function sendLeadToSheet(data){
 function shouldShowLeadDesktop(){
   if (!isBrowser()) return false;
   try {
+    if (localStorage.getItem(LEAD_SUBMITTED_KEY)){
+      return false;
+    }
     const saved = localStorage.getItem(LEAD_STORAGE_KEY);
-    return !saved;
+    if (saved){
+      try {
+        localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
+      } catch (err) {
+        /* no-op */
+      }
+      return false;
+    }
+    return true;
   } catch (e) {
     return true;
   }
