@@ -112,6 +112,7 @@ const STATE_PLAY = "play";
 const STATE_VICTORY = "victory";
 const STATE_LOSE = "lose";
 const STATE_LEAD = "lead";
+const STATE_TUTORIAL = "tutorial";
 
 let currentState = null;
 let previousState = null;
@@ -131,6 +132,7 @@ function exitState(state){
     case STATE_VICTORY: exitStateVictory(); break;
     case STATE_LOSE: exitStateLose(); break;
     case STATE_LEAD: exitStateLead(); break;
+    case STATE_TUTORIAL: exitStateTutorial(); break;
   }
 }
 
@@ -141,6 +143,7 @@ function enterState(state){
     case STATE_VICTORY: enterStateVictory(); break;
     case STATE_LOSE: enterStateLose(); break;
     case STATE_LEAD: enterStateLead(); break;
+    case STATE_TUTORIAL: enterStateTutorial(); break;
   }
 }
 
@@ -169,11 +172,14 @@ let timerActive = false;
 let shakeTimer = 0;
 let shakeIntensity = 0;
 let shakeDuration = 0;
+let happyTimer = 0;
+const HAPPY_HOLD_MS = 1200;
 
 // UI button rectangles
 let startButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 500, h: 200 };
 let victoryButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 480, h: 160 };
 let loseButtonRect = { x: WIDTH/2, y: HEIGHT - 380, w: 480, h: 140 };
+let tutorialButtonRect = { x: WIDTH / 2, y: HEIGHT - 320, w: 720, h: 220 };
 
 function preload(){
   safeSoundFormats('mp3','wav','ogg');
@@ -308,11 +314,12 @@ function setupObjects(){
 }
 
 function resetGame(){
-  babyMood = -1;
+  babyMood = 0;
   bedtimeSeconds = 30;
   timerActive = false;
   loseVideoActive = false;
   currentDrag = null;
+  happyTimer = 0;
   interactables.forEach(obj => {
     obj.x = obj.homeX;
     obj.y = obj.homeY;
@@ -336,6 +343,9 @@ function draw(){
   switch(currentState){
     case STATE_MENU:
       drawMenu();
+      break;
+    case STATE_TUTORIAL:
+      drawTutorial();
       break;
     case STATE_PLAY:
       drawGame();
@@ -405,6 +415,63 @@ function drawMenu(){
   }
 }
 
+function drawTutorial(){
+  imageMode(CORNER);
+  if (imgBackground) image(imgBackground, 0, 0, WIDTH, HEIGHT);
+  imageMode(CENTER);
+
+  push();
+  noStroke();
+  fill(12, 4, 26, 210);
+  rect(0, 0, WIDTH, HEIGHT);
+  pop();
+
+  const font = CONFIG.fonts.uiFamily || 'sans-serif';
+  const scale = CONFIG.fonts.labelScale ?? 1;
+  const steps = [
+    'Drag an object from the bottom.',
+    'Drop it on the baby to change mood.',
+    'Make the baby Happy before Bedtime hits 0.'
+  ];
+
+  push();
+  textAlign(CENTER, TOP);
+  textFont(font);
+  fill(255);
+  textSize(56 * scale);
+  const startY = HEIGHT / 2 - 260;
+  steps.forEach((line, index) => {
+    text(line, WIDTH / 2, startY + index * 120, WIDTH * 0.8);
+  });
+  pop();
+
+  const btnW = 760;
+  const btnH = 200;
+  const btnY = HEIGHT - 320;
+  tutorialButtonRect = { x: WIDTH / 2, y: btnY, w: btnW, h: btnH };
+  const hovering = pointInRect(mouseX, mouseY, tutorialButtonRect);
+
+  push();
+  rectMode(CENTER);
+  stroke(255);
+  strokeWeight(4);
+  fill(hovering ? color(255, 156, 208, 240) : color(246, 132, 190, 210));
+  rect(tutorialButtonRect.x, tutorialButtonRect.y, btnW, btnH, 48);
+  noStroke();
+  fill(80, 16, 46);
+  textAlign(CENTER, CENTER);
+  textFont(font);
+  textSize(64 * scale);
+  text('Tap to start', tutorialButtonRect.x, tutorialButtonRect.y + 6);
+  pop();
+
+  if (hovering) cursor('pointer'); else cursor(ARROW);
+
+  if (loadingMessageVisible){
+    drawLoadingMessage();
+  }
+}
+
 function drawLoadingMessage(){
   const font = CONFIG.fonts.uiFamily || 'sans-serif';
   const scale = CONFIG.fonts.labelScale ?? 1;
@@ -427,6 +494,14 @@ function drawGame(){
   drawBedtimeTimer();
   drawBaby();
   drawInteractables();
+  if (babyMood === 1){
+    happyTimer += deltaTime;
+    if (happyTimer >= HAPPY_HOLD_MS){
+      enterVictory();
+    }
+  } else {
+    happyTimer = 0;
+  }
 }
 
 function drawVictory(){
@@ -453,15 +528,7 @@ function drawVictory(){
   victoryButtonRect.y = victoryY;
   victoryButtonRect.w = btnW;
   victoryButtonRect.h = btnH;
-  const secondaryY = victoryY + (CONFIG.buttons.secondaryOffsetY ?? 200);
-  drawSecondaryButton(victoryButtonRect.x, secondaryY, "MENU");
-  const menuRect = {
-    x: victoryButtonRect.x,
-    y: secondaryY,
-    w: CONFIG.buttons.secondaryWidth ?? 380,
-    h: CONFIG.buttons.secondaryHeight ?? 120
-  };
-  if (pointInRect(mouseX, mouseY, victoryButtonRect) || pointInRect(mouseX, mouseY, menuRect)) cursor('pointer'); else cursor(ARROW);
+  if (pointInRect(mouseX, mouseY, victoryButtonRect)) cursor('pointer'); else cursor(ARROW);
 }
 
 function drawLose(){
@@ -644,13 +711,20 @@ function mousePressed(){
   if (currentState === STATE_MENU){
     if (pointInRect(mouseX, mouseY, startButtonRect)){
       playSfx('btn');
-      startRequested = true;
       beginAssetLoading();
-      if (shouldShowLeadDesktop()){
+      if (!leadAlreadyShownThisSession() && shouldShowLeadDesktop()){
+        markLeadShownThisSession();
         enterLeadDesktop();
       } else {
-        startGame();
+        goToTutorialOrStart();
       }
+    }
+    return;
+  }
+  if (currentState === STATE_TUTORIAL){
+    if (pointInRect(mouseX, mouseY, tutorialButtonRect)){
+      playSfx('btn');
+      startGame();
     }
     return;
   }
@@ -660,18 +734,6 @@ function mousePressed(){
       resetGame();
       startRequested = true;
       startGame();
-      return;
-    }
-    const menuRect = {
-      x: victoryButtonRect.x,
-      y: victoryButtonRect.y + (CONFIG.buttons.secondaryOffsetY ?? 200),
-      w: CONFIG.buttons.secondaryWidth ?? 380,
-      h: CONFIG.buttons.secondaryHeight ?? 120
-    };
-    if (pointInRect(mouseX, mouseY, menuRect)){
-      playSfx('btn');
-      resetGame();
-      setState(STATE_MENU);
     }
     return;
   }
@@ -722,7 +784,6 @@ function mouseReleased(){
       lose();
     } else if (babyMood === 1){
       score += 1;
-      enterVictory();
     }
   } else {
     obj.x = obj.homeX;
@@ -768,6 +829,11 @@ function enterStateMenu(){
   flushPendingLeads();
 }
 function exitStateMenu(){}
+
+function enterStateTutorial(){
+  cursor(ARROW);
+}
+function exitStateTutorial(){}
 
 function enterStatePlay(){
   timerActive = true;
@@ -823,6 +889,7 @@ function startGame(){
 
 function enterVictory(){
   timerActive = false;
+  happyTimer = 0;
   setState(STATE_VICTORY);
 }
 
@@ -981,7 +1048,7 @@ function exitLeadDesktopAndGoTutorial(){
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
   if (leadError) leadError.textContent = '';
   if (leadSuccess) leadSuccess.textContent = '';
-  startGame();
+  goToTutorialOrStart();
 }
 
 function onLeadSubmit(event){
@@ -1004,7 +1071,13 @@ function onLeadSubmit(event){
   leadPending = true;
   leadSubmitButton.disabled = true;
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'true';
-  const payload = { firstName, lastName, email, timestamp: new Date().toISOString() };
+  const payload = {
+    firstName,
+    lastName,
+    name: `${firstName} ${lastName}`.trim(),
+    email,
+    timestamp: new Date().toISOString()
+  };
   sendLeadToSheet(payload)
     .then(() => {
       try {
@@ -1035,13 +1108,10 @@ function onLeadSubmit(event){
     });
 }
 
-function sendLeadToSheet(data, useTimeout = true){
-  if (!LEAD_ENDPOINT){
-    return Promise.resolve();
-  }
+function fetchWithTimeout(url, opts = {}, ms = 4500){
   let controller = null;
   let timeoutId = null;
-  if (typeof AbortController !== 'undefined' && useTimeout){
+  if (typeof AbortController !== 'undefined'){
     controller = new AbortController();
     timeoutId = setTimeout(() => {
       try {
@@ -1049,29 +1119,34 @@ function sendLeadToSheet(data, useTimeout = true){
       } catch (e) {
         /* no-op */
       }
-    }, 4500);
+    }, ms);
   }
-  const fetchOptions = {
+  const options = { ...opts };
+  if (controller){
+    options.signal = controller.signal;
+  }
+  return fetch(url, options).finally(() => {
+    if (timeoutId){
+      clearTimeout(timeoutId);
+    }
+  });
+}
+
+function sendLeadToSheet(data){
+  if (!LEAD_ENDPOINT || !isBrowser()){
+    return Promise.resolve();
+  }
+  return fetchWithTimeout(LEAD_ENDPOINT, {
     method: 'POST',
     mode: 'cors',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
-  };
-  if (controller){
-    fetchOptions.signal = controller.signal;
-  }
-  return fetch(LEAD_ENDPOINT, fetchOptions)
-    .then(response => {
-      if (!response.ok){
-        throw new Error('Lead submit failed');
-      }
-      return response;
-    })
-    .finally(() => {
-      if (timeoutId){
-        clearTimeout(timeoutId);
-      }
-    });
+  }, 4500).then(response => {
+    if (!response.ok){
+      throw new Error('bad');
+    }
+    return response;
+  });
 }
 
 function enqueuePendingLead(payload){
@@ -1095,7 +1170,7 @@ function enqueuePendingLead(payload){
 }
 
 function flushPendingLeads(){
-  if (!isBrowser()) return Promise.resolve();
+  if (!isBrowser() || !LEAD_ENDPOINT) return Promise.resolve();
   let queue = [];
   try {
     const raw = localStorage.getItem(LEAD_QUEUE_KEY) || '[]';
@@ -1110,17 +1185,35 @@ function flushPendingLeads(){
     return Promise.resolve();
   }
   const next = queue[0];
-  return sendLeadToSheet(next, true)
-    .then(() => {
-      queue.shift();
-      try {
-        localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(queue));
-      } catch (e) {
-        /* no-op */
-      }
-      return flushPendingLeads();
-    })
-    .catch(() => Promise.resolve());
+  return fetchWithTimeout(LEAD_ENDPOINT, {
+    method: 'POST',
+    mode: 'cors',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(next)
+  }, 4500).then(response => {
+    if (!response.ok){
+      throw new Error('bad');
+    }
+    queue.shift();
+    try {
+      localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(queue));
+    } catch (err) {
+      /* no-op */
+    }
+    return flushPendingLeads();
+  }).catch(() => Promise.resolve());
+}
+
+function goToTutorialOrStart(){
+  if (!tutorialAlreadyShown()){
+    markTutorialShown();
+    setState(STATE_TUTORIAL);
+  } else {
+    startGame();
+    if (currentState === STATE_LEAD){
+      setState(STATE_MENU);
+    }
+  }
 }
 
 function shouldShowLeadDesktop(){
@@ -1146,6 +1239,42 @@ function shouldShowLeadDesktop(){
 
 function isBrowser(){
   return typeof window !== 'undefined';
+}
+
+function leadAlreadyShownThisSession(){
+  if (!isBrowser()) return false;
+  try {
+    return !!sessionStorage.getItem('leadShown_v1');
+  } catch (e) {
+    return false;
+  }
+}
+
+function markLeadShownThisSession(){
+  if (!isBrowser()) return;
+  try {
+    sessionStorage.setItem('leadShown_v1', '1');
+  } catch (e) {
+    /* no-op */
+  }
+}
+
+function tutorialAlreadyShown(){
+  if (!isBrowser()) return false;
+  try {
+    return !!sessionStorage.getItem('tutorialShown_v1');
+  } catch (e) {
+    return false;
+  }
+}
+
+function markTutorialShown(){
+  if (!isBrowser()) return;
+  try {
+    sessionStorage.setItem('tutorialShown_v1', '1');
+  } catch (e) {
+    /* no-op */
+  }
 }
 
 function isMobileDevice(){
