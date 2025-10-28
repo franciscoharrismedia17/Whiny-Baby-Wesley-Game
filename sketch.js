@@ -12,21 +12,20 @@ const CONFIG = {
   },
   items: {
     baseX: WIDTH / 2,
-    y: 1580,
+    y: 1740,
     spacing: 340,
     scale: 0.9,
     order: ['oil', 'maga', 'hillary']
   },
   timer: {
-    x: 120,
+    xRight: WIDTH - 120,
     y: 140,
-    labelSize: 96,
-    numberSize: 76,
+    labelSize: 68,
+    numberSize: 78,
     pinkRectW: 220,
     pinkRectH: 112,
     pinkRadius: 48,
-    numberOffsetX: 460,
-    numberOffsetY: 10
+    spacing: 36
   },
   score: {
     x: 120,
@@ -58,8 +57,17 @@ const CONFIG = {
 
 // Audio helper configuration
 let MASTER_GAIN = 0.9, MUSIC_GAIN = 0.6, SFX_GAIN = 0.9;
-let SFX = { music:null, pick:null, dropGood:null, dropBad:null, btn:null };
-let audioPrimed=false, musicStarted=false;
+let AUDIO = {
+  music: null,
+  button: null,
+  happy: null,
+  cry: null,
+  victory: null,
+  grab: null,
+  drop: null
+};
+let audioPrimed = false;
+let musicPausedForCry = false;
 function safeMasterVolume(v){ if (typeof window.masterVolume === 'function') window.masterVolume(v); }
 function safeSoundFormats(){ if (typeof window.soundFormats === 'function') window.soundFormats.apply(null, arguments); }
 function safeLoadSound(path){ return (typeof window.loadSound === 'function') ? loadSound(path) : null; }
@@ -69,12 +77,72 @@ function ensureAudioContext(){
   if (ac && ac.state !== "running") { try { ac.resume(); } catch(e){} }
   audioPrimed = true;
 }
-function playSfx(key){
-  const snd = SFX[key];
+function getSound(key){
+  return AUDIO[key] || null;
+}
+function playSound(key, volume = SFX_GAIN, allowOverlap = false){
+  const snd = getSound(key);
   if (!snd) return;
-  try { snd.stop(); } catch(e){}
-  snd.setVolume(SFX_GAIN);
+  try {
+    if (!allowOverlap) snd.stop();
+  } catch (e) {
+    /* no-op */
+  }
+  try {
+    snd.setVolume(volume);
+  } catch (e) {
+    /* no-op */
+  }
   snd.play();
+}
+function startMusicLoop(){
+  const music = getSound('music');
+  if (!music) return;
+  try {
+    music.setLoop(true);
+    music.setVolume(MUSIC_GAIN);
+    if (!music.isPlaying()){
+      music.play();
+    }
+  } catch (e) {
+    /* no-op */
+  }
+  musicPausedForCry = false;
+}
+function stopMusic(){
+  const music = getSound('music');
+  if (!music) return;
+  try {
+    music.stop();
+  } catch (e) {
+    /* no-op */
+  }
+  musicPausedForCry = false;
+}
+function pauseMusicForCry(){
+  const music = getSound('music');
+  if (!music) return;
+  try {
+    if (music.isPlaying()){
+      music.pause();
+      musicPausedForCry = true;
+    }
+  } catch (e) {
+    /* no-op */
+  }
+}
+function resumeMusicFromCry(){
+  if (!musicPausedForCry) return;
+  const music = getSound('music');
+  if (!music) return;
+  try {
+    if (!music.isPlaying()){
+      music.play();
+    }
+  } catch (e) {
+    /* no-op */
+  }
+  musicPausedForCry = false;
 }
 
 let canvas;
@@ -112,7 +180,6 @@ const STATE_PLAY = "play";
 const STATE_VICTORY = "victory";
 const STATE_LOSE = "lose";
 const STATE_LEAD = "lead";
-const STATE_TUTORIAL = "tutorial";
 
 let currentState = null;
 let previousState = null;
@@ -132,7 +199,6 @@ function exitState(state){
     case STATE_VICTORY: exitStateVictory(); break;
     case STATE_LOSE: exitStateLose(); break;
     case STATE_LEAD: exitStateLead(); break;
-    case STATE_TUTORIAL: exitStateTutorial(); break;
   }
 }
 
@@ -143,7 +209,6 @@ function enterState(state){
     case STATE_VICTORY: enterStateVictory(); break;
     case STATE_LOSE: enterStateLose(); break;
     case STATE_LEAD: enterStateLead(); break;
-    case STATE_TUTORIAL: enterStateTutorial(); break;
   }
 }
 
@@ -166,7 +231,7 @@ let loseVideoActive = false;
 let interactables = [];
 let currentDrag = null;
 let score = 0;
-let babyMood = -1;
+let babyMood = 0;
 let bedtimeSeconds = 30;
 let timerActive = false;
 let shakeTimer = 0;
@@ -179,7 +244,6 @@ const HAPPY_HOLD_MS = 1200;
 let startButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 500, h: 200 };
 let victoryButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 480, h: 160 };
 let loseButtonRect = { x: WIDTH/2, y: HEIGHT - 380, w: 480, h: 140 };
-let tutorialButtonRect = { x: WIDTH / 2, y: HEIGHT - 320, w: 720, h: 220 };
 
 function preload(){
   safeSoundFormats('mp3','wav','ogg');
@@ -205,6 +269,19 @@ function loadFontAsync(path, assign){
   });
 }
 
+function loadSoundAsync(path, assign){
+  return new Promise(resolve => {
+    if (typeof loadSound !== 'function'){
+      resolve();
+      return;
+    }
+    loadSound(path, sound => {
+      if (assign) assign(sound);
+      resolve();
+    }, () => resolve());
+  });
+}
+
 function loadVideoAsync(path){
   return new Promise(resolve => {
     if (loseVideo){
@@ -223,7 +300,7 @@ function configureLoseVideo(){
   loseVideo.elt.classList.add('lose-video');
   loseVideo.elt.setAttribute('playsinline', 'true');
   loseVideo.elt.preload = 'auto';
-  loseVideo.volume(0);
+  loseVideo.volume(1);
   loseVideo.hide();
   loseVideo.onended(onLoseVideoEnded);
   loseVideo.parent('app');
@@ -250,6 +327,15 @@ function beginAssetLoading(){
       uiFont = font;
       CONFIG.fonts.uiFamily = uiFont;
     }),
+    loadSoundAsync('assets/Music.mp3', sound => AUDIO.music = sound),
+    loadSoundAsync('assets/Button.wav', sound => AUDIO.button = sound),
+    loadSoundAsync('assets/Happy.mp3', sound => AUDIO.happy = sound),
+    loadSoundAsync('assets/Cry.mp3', sound => AUDIO.cry = sound),
+    loadSoundAsync('assets/Victory.wav', sound => AUDIO.victory = sound),
+    loadSoundAsync('assets/grab.mp3', sound => AUDIO.grab = sound),
+    loadSoundAsync('assets/grab.wav', sound => { if (!AUDIO.grab) AUDIO.grab = sound; }),
+    loadSoundAsync('assets/drop.mp3', sound => AUDIO.drop = sound),
+    loadSoundAsync('assets/drop.wav', sound => { if (!AUDIO.drop) AUDIO.drop = sound; }),
     loadVideoAsync('assets/LOSE.mp4')
   ];
   Promise.all(tasks).then(() => {
@@ -262,6 +348,9 @@ function beginAssetLoading(){
     }
     setupObjects();
     resetGame();
+    if (currentState !== STATE_VICTORY && currentState !== STATE_LOSE){
+      startMusicLoop();
+    }
     if (startRequested){
       startGame();
     }
@@ -314,7 +403,7 @@ function setupObjects(){
 }
 
 function resetGame(){
-  babyMood = 0;
+  setBabyMood(0);
   bedtimeSeconds = 30;
   timerActive = false;
   loseVideoActive = false;
@@ -343,9 +432,6 @@ function draw(){
   switch(currentState){
     case STATE_MENU:
       drawMenu();
-      break;
-    case STATE_TUTORIAL:
-      drawTutorial();
       break;
     case STATE_PLAY:
       drawGame();
@@ -410,63 +496,6 @@ function drawMenu(){
   startButtonRect.x = WIDTH / 2;
   startButtonRect.y = startY;
   if (pointInRect(mouseX, mouseY, startButtonRect)) cursor('pointer'); else cursor(ARROW);
-  if (loadingMessageVisible){
-    drawLoadingMessage();
-  }
-}
-
-function drawTutorial(){
-  imageMode(CORNER);
-  if (imgBackground) image(imgBackground, 0, 0, WIDTH, HEIGHT);
-  imageMode(CENTER);
-
-  push();
-  noStroke();
-  fill(12, 4, 26, 210);
-  rect(0, 0, WIDTH, HEIGHT);
-  pop();
-
-  const font = CONFIG.fonts.uiFamily || 'sans-serif';
-  const scale = CONFIG.fonts.labelScale ?? 1;
-  const steps = [
-    'Drag an object from the bottom.',
-    'Drop it on the baby to change mood.',
-    'Make the baby Happy before Bedtime hits 0.'
-  ];
-
-  push();
-  textAlign(CENTER, TOP);
-  textFont(font);
-  fill(255);
-  textSize(56 * scale);
-  const startY = HEIGHT / 2 - 260;
-  steps.forEach((line, index) => {
-    text(line, WIDTH / 2, startY + index * 120, WIDTH * 0.8);
-  });
-  pop();
-
-  const btnW = 760;
-  const btnH = 200;
-  const btnY = HEIGHT - 320;
-  tutorialButtonRect = { x: WIDTH / 2, y: btnY, w: btnW, h: btnH };
-  const hovering = pointInRect(mouseX, mouseY, tutorialButtonRect);
-
-  push();
-  rectMode(CENTER);
-  stroke(255);
-  strokeWeight(4);
-  fill(hovering ? color(255, 156, 208, 240) : color(246, 132, 190, 210));
-  rect(tutorialButtonRect.x, tutorialButtonRect.y, btnW, btnH, 48);
-  noStroke();
-  fill(80, 16, 46);
-  textAlign(CENTER, CENTER);
-  textFont(font);
-  textSize(64 * scale);
-  text('Tap to start', tutorialButtonRect.x, tutorialButtonRect.y + 6);
-  pop();
-
-  if (hovering) cursor('pointer'); else cursor(ARROW);
-
   if (loadingMessageVisible){
     drawLoadingMessage();
   }
@@ -650,29 +679,29 @@ function drawBedtimeTimer(){
   const scale = CONFIG.fonts.labelScale ?? 1;
   const cfg = CONFIG.timer;
   textFont(font);
-  textSize(cfg.labelSize * scale);
-  textAlign(LEFT, CENTER);
-  const x = cfg.x;
-  const y = cfg.y;
+  const badgeRight = cfg.xRight;
+  const badgeCenterX = badgeRight - (cfg.pinkRectW / 2);
+  const badgeCenterY = cfg.y;
+  const labelAnchorX = badgeCenterX - (cfg.pinkRectW / 2) - cfg.spacing;
   drawingContext.shadowColor = 'rgba(58, 18, 34, 0.5)';
   drawingContext.shadowBlur = 12;
   fill(255, 238, 243);
-  text('BEDTIME', x, y);
-  const badgeX = x + cfg.numberOffsetX;
-  const badgeY = y;
+  textAlign(RIGHT, CENTER);
+  textSize(cfg.labelSize * scale);
+  text('BEDTIME', labelAnchorX, badgeCenterY);
   const badgeW = cfg.pinkRectW;
   const badgeH = cfg.pinkRectH;
   rectMode(CENTER);
   stroke(255);
   strokeWeight(4);
   fill(255, 138, 181);
-  rect(badgeX, badgeY + 6, badgeW, badgeH, cfg.pinkRadius);
+  rect(badgeCenterX, badgeCenterY + 6, badgeW, badgeH, cfg.pinkRadius);
   noStroke();
   fill(255);
   textAlign(CENTER, CENTER);
   textSize(cfg.numberSize * scale);
   const display = Math.max(0, Math.ceil(bedtimeSeconds));
-  text(display.toString(), badgeX, badgeY + cfg.numberOffsetY);
+  text(display.toString(), badgeCenterX, badgeCenterY + 6);
   pop();
   textAlign(LEFT, TOP);
 }
@@ -710,27 +739,20 @@ function mousePressed(){
   ensureAudioContext();
   if (currentState === STATE_MENU){
     if (pointInRect(mouseX, mouseY, startButtonRect)){
-      playSfx('btn');
+      playSound('button');
       beginAssetLoading();
       if (!leadAlreadyShownThisSession() && shouldShowLeadDesktop()){
         markLeadShownThisSession();
         enterLeadDesktop();
       } else {
-        goToTutorialOrStart();
+        startPlayFlow();
       }
-    }
-    return;
-  }
-  if (currentState === STATE_TUTORIAL){
-    if (pointInRect(mouseX, mouseY, tutorialButtonRect)){
-      playSfx('btn');
-      startGame();
     }
     return;
   }
   if (currentState === STATE_VICTORY){
     if (pointInRect(mouseX, mouseY, victoryButtonRect)){
-      playSfx('btn');
+      playSound('button');
       resetGame();
       startRequested = true;
       startGame();
@@ -739,7 +761,7 @@ function mousePressed(){
   }
   if (currentState === STATE_LOSE){
     if (pointInRect(mouseX, mouseY, loseButtonRect)){
-      playSfx('btn');
+      playSound('button');
       resetGame();
       startRequested = true;
       startGame();
@@ -753,7 +775,7 @@ function mousePressed(){
         obj.dragging = true;
         obj.hover = true;
         noCursor();
-        playSfx('pick');
+        playSound('grab');
         break;
       }
     }
@@ -773,16 +795,15 @@ function mouseReleased(){
   const obj = currentDrag;
   obj.dragging = false;
   cursor(ARROW);
+  playSound('drop');
   const droppedInside = pointInRect(obj.x, obj.y, getBabyHitbox());
   if (droppedInside){
-    babyMood += obj.delta;
-    babyMood = constrain(babyMood, -2, 1);
+    const mood = adjustBabyMood(obj.delta);
     obj.x = obj.homeX;
     obj.y = obj.homeY;
-    playSfx(obj.delta > 0 ? 'dropGood' : 'dropBad');
-    if (babyMood < -1){
+    if (mood < -1){
       lose();
-    } else if (babyMood === 1){
+    } else if (mood === 1){
       score += 1;
     }
   } else {
@@ -791,6 +812,27 @@ function mouseReleased(){
     triggerShake();
   }
   currentDrag = null;
+}
+
+function adjustBabyMood(delta){
+  return setBabyMood(babyMood + delta);
+}
+
+function setBabyMood(value){
+  const previous = babyMood;
+  const next = constrain(value, -2, 1);
+  babyMood = next;
+  if (next <= -1 && previous > -1){
+    playSound('cry');
+    pauseMusicForCry();
+  }
+  if (next === 1 && previous !== 1){
+    playSound('happy');
+  }
+  if (previous <= -1 && next >= 0){
+    resumeMusicFromCry();
+  }
+  return next;
 }
 
 function over(obj, px, py){
@@ -827,16 +869,15 @@ function enterStateMenu(){
     loadingMessageVisible = false;
   }
   flushPendingLeads();
+  startMusicLoop();
 }
 function exitStateMenu(){}
 
-function enterStateTutorial(){
-  cursor(ARROW);
-}
-function exitStateTutorial(){}
-
 function enterStatePlay(){
   timerActive = true;
+  if (!musicPausedForCry){
+    startMusicLoop();
+  }
 }
 function exitStatePlay(){
   timerActive = false;
@@ -844,11 +885,14 @@ function exitStatePlay(){
 
 function enterStateVictory(){
   cursor(ARROW);
+  stopMusic();
+  playSound('victory');
 }
 function exitStateVictory(){}
 
 function enterStateLose(){
   cursor(ARROW);
+  stopMusic();
   const hasVideo = !!loseVideo;
   if (hasVideo){
     loseVideo.show();
@@ -872,6 +916,13 @@ function enterStateLead(){
   cursor(ARROW);
 }
 function exitStateLead(){}
+
+function startPlayFlow(){
+  startGame();
+  if (currentState === STATE_LEAD){
+    setState(STATE_MENU);
+  }
+}
 
 function startGame(){
   if (!assetsLoaded){
@@ -1039,7 +1090,7 @@ function enterLeadDesktop(){
   }
 }
 
-function exitLeadDesktopAndGoTutorial(){
+function exitLeadDesktopAndStartGame(){
   if (leadOverlay){
     leadOverlay.style.display = 'none';
   }
@@ -1048,12 +1099,14 @@ function exitLeadDesktopAndGoTutorial(){
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
   if (leadError) leadError.textContent = '';
   if (leadSuccess) leadSuccess.textContent = '';
-  goToTutorialOrStart();
+  startPlayFlow();
 }
 
 function onLeadSubmit(event){
   event.preventDefault();
   if (leadPending) return;
+  ensureAudioContext();
+  playSound('button');
   const formData = new FormData(leadForm);
   const firstName = (formData.get('firstName') || '').toString().trim();
   const lastName = (formData.get('lastName') || '').toString().trim();
@@ -1071,11 +1124,15 @@ function onLeadSubmit(event){
   leadPending = true;
   leadSubmitButton.disabled = true;
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'true';
+  const platform = getPlatformInfo();
+  const userAgent = getUserAgentInfo();
   const payload = {
     firstName,
     lastName,
     name: `${firstName} ${lastName}`.trim(),
     email,
+    platform,
+    userAgent,
     timestamp: new Date().toISOString()
   };
   sendLeadToSheet(payload)
@@ -1090,7 +1147,7 @@ function onLeadSubmit(event){
       } catch (e) {
         /* no-op */
       }
-      exitLeadDesktopAndGoTutorial();
+      exitLeadDesktopAndStartGame();
     })
     .catch(() => {
       enqueuePendingLead(payload);
@@ -1104,7 +1161,7 @@ function onLeadSubmit(event){
       } catch (e) {
         /* no-op */
       }
-      exitLeadDesktopAndGoTutorial();
+      exitLeadDesktopAndStartGame();
     });
 }
 
@@ -1133,20 +1190,48 @@ function fetchWithTimeout(url, opts = {}, ms = 4500){
 }
 
 function sendLeadToSheet(data){
-  if (!LEAD_ENDPOINT || !isBrowser()){
+  if (!LEAD_ENDPOINT || !isBrowser() || typeof FormData === 'undefined'){
     return Promise.resolve();
   }
+  const formData = buildLeadFormData(data);
   return fetchWithTimeout(LEAD_ENDPOINT, {
     method: 'POST',
     mode: 'cors',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
+    body: formData
   }, 4500).then(response => {
     if (!response.ok){
       throw new Error('bad');
     }
     return response;
   });
+}
+
+function buildLeadFormData(data = {}){
+  const formData = new FormData();
+  const rawFirst = data.firstName ?? data.first ?? '';
+  const rawLast = data.lastName ?? data.last ?? '';
+  const rawEmail = data.email ?? data.emailAddress ?? '';
+  let first = (rawFirst || '').toString().trim();
+  let last = (rawLast || '').toString().trim();
+  const fallbackName = (data.name || '').toString().trim();
+  if (!first && fallbackName){
+    const segments = fallbackName.split(/\s+/);
+    first = segments.shift() || '';
+    last = segments.join(' ');
+  }
+  if (!last && fallbackName && first){
+    const start = fallbackName.indexOf(' ');
+    last = start >= 0 ? fallbackName.slice(start + 1).trim() : '';
+  }
+  const email = (rawEmail || '').toString().trim();
+  const platform = (data.platform || '').toString().trim() || getPlatformInfo();
+  const userAgent = (data.userAgent || '').toString().trim() || getUserAgentInfo();
+  formData.append('first', first);
+  formData.append('last', last);
+  formData.append('email', email);
+  formData.append('platform', platform);
+  formData.append('userAgent', userAgent);
+  return formData;
 }
 
 function enqueuePendingLead(payload){
@@ -1185,15 +1270,7 @@ function flushPendingLeads(){
     return Promise.resolve();
   }
   const next = queue[0];
-  return fetchWithTimeout(LEAD_ENDPOINT, {
-    method: 'POST',
-    mode: 'cors',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(next)
-  }, 4500).then(response => {
-    if (!response.ok){
-      throw new Error('bad');
-    }
+  return sendLeadToSheet(next).then(() => {
     queue.shift();
     try {
       localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(queue));
@@ -1202,18 +1279,6 @@ function flushPendingLeads(){
     }
     return flushPendingLeads();
   }).catch(() => Promise.resolve());
-}
-
-function goToTutorialOrStart(){
-  if (!tutorialAlreadyShown()){
-    markTutorialShown();
-    setState(STATE_TUTORIAL);
-  } else {
-    startGame();
-    if (currentState === STATE_LEAD){
-      setState(STATE_MENU);
-    }
-  }
 }
 
 function shouldShowLeadDesktop(){
@@ -1259,28 +1324,22 @@ function markLeadShownThisSession(){
   }
 }
 
-function tutorialAlreadyShown(){
-  if (!isBrowser()) return false;
-  try {
-    return !!sessionStorage.getItem('tutorialShown_v1');
-  } catch (e) {
-    return false;
-  }
-}
-
-function markTutorialShown(){
-  if (!isBrowser()) return;
-  try {
-    sessionStorage.setItem('tutorialShown_v1', '1');
-  } catch (e) {
-    /* no-op */
-  }
-}
-
 function isMobileDevice(){
   if (!isBrowser()) return false;
   const ua = navigator.userAgent || navigator.vendor || '';
   return /android|iphone|ipad|ipod|opera mini|iemobile/i.test(ua.toLowerCase());
+}
+
+function getPlatformInfo(){
+  if (!isBrowser()) return '';
+  const nav = navigator || {};
+  const uaData = nav.userAgentData || {};
+  return uaData.platform || nav.platform || '';
+}
+
+function getUserAgentInfo(){
+  if (!isBrowser()) return '';
+  return navigator.userAgent || '';
 }
 
 function validateEmail(email){
