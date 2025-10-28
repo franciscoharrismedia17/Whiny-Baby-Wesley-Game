@@ -425,7 +425,6 @@ function drawGame(){
 
   updateTimer();
   drawBedtimeTimer();
-  drawScore();
   drawBaby();
   drawInteractables();
 }
@@ -766,6 +765,7 @@ function enterStateMenu(){
   if (!assetsLoading){
     loadingMessageVisible = false;
   }
+  flushPendingLeads();
 }
 function exitStateMenu(){}
 
@@ -816,9 +816,6 @@ function startGame(){
   }
   startRequested = false;
   loadingMessageVisible = false;
-  if (leadOverlay && leadOverlay.style){
-    leadOverlay.style.display = 'none';
-  }
   resetGame();
   timerActive = true;
   setState(STATE_PLAY);
@@ -848,6 +845,7 @@ function onLoseVideoEnded(){
 // Lead generation implementation
 const LEAD_STORAGE_KEY = 'wbw_lead_data_v1';
 const LEAD_SUBMITTED_KEY = 'wbw_lead_submitted_v1';
+const LEAD_QUEUE_KEY = 'wbw_lead_queue_v1';
 const LEAD_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxDzVhcizXvcVpe3iYHhT_w64gRG6EUVGscVmxWj9vkpZzg2yu4ZRGayMf56EEN68pl/exec';
 let leadOverlay = null;
 let leadForm = null;
@@ -1022,6 +1020,7 @@ function onLeadSubmit(event){
       exitLeadDesktopAndGoTutorial();
     })
     .catch(() => {
+      enqueuePendingLead(payload);
       try {
         localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
       } catch (e) {
@@ -1036,21 +1035,92 @@ function onLeadSubmit(event){
     });
 }
 
-function sendLeadToSheet(data){
+function sendLeadToSheet(data, useTimeout = true){
   if (!LEAD_ENDPOINT){
     return Promise.resolve();
   }
-  return fetch(LEAD_ENDPOINT, {
+  let controller = null;
+  let timeoutId = null;
+  if (typeof AbortController !== 'undefined' && useTimeout){
+    controller = new AbortController();
+    timeoutId = setTimeout(() => {
+      try {
+        controller.abort();
+      } catch (e) {
+        /* no-op */
+      }
+    }, 4500);
+  }
+  const fetchOptions = {
     method: 'POST',
     mode: 'cors',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
-  }).then(response => {
-    if (!response.ok){
-      throw new Error('Lead submit failed');
+  };
+  if (controller){
+    fetchOptions.signal = controller.signal;
+  }
+  return fetch(LEAD_ENDPOINT, fetchOptions)
+    .then(response => {
+      if (!response.ok){
+        throw new Error('Lead submit failed');
+      }
+      return response;
+    })
+    .finally(() => {
+      if (timeoutId){
+        clearTimeout(timeoutId);
+      }
+    });
+}
+
+function enqueuePendingLead(payload){
+  if (!isBrowser()) return;
+  try {
+    const raw = localStorage.getItem(LEAD_QUEUE_KEY) || '[]';
+    let queue;
+    try {
+      queue = JSON.parse(raw);
+      if (!Array.isArray(queue)){
+        queue = [];
+      }
+    } catch (err) {
+      queue = [];
     }
-    return response;
-  });
+    queue.push(payload);
+    localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(queue));
+  } catch (e) {
+    /* no-op */
+  }
+}
+
+function flushPendingLeads(){
+  if (!isBrowser()) return Promise.resolve();
+  let queue = [];
+  try {
+    const raw = localStorage.getItem(LEAD_QUEUE_KEY) || '[]';
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)){
+      queue = parsed;
+    }
+  } catch (e) {
+    queue = [];
+  }
+  if (!queue.length){
+    return Promise.resolve();
+  }
+  const next = queue[0];
+  return sendLeadToSheet(next, true)
+    .then(() => {
+      queue.shift();
+      try {
+        localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(queue));
+      } catch (e) {
+        /* no-op */
+      }
+      return flushPendingLeads();
+    })
+    .catch(() => Promise.resolve());
 }
 
 function shouldShowLeadDesktop(){
@@ -1087,4 +1157,10 @@ function isMobileDevice(){
 function validateEmail(email){
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return re.test(email);
+}
+
+if (isBrowser()){
+  window.addEventListener('focus', () => {
+    flushPendingLeads();
+  });
 }
