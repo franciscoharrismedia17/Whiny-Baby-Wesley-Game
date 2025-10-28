@@ -2,6 +2,60 @@
 const WIDTH = 1080;
 const HEIGHT = 1920;
 
+const CONFIG = {
+  baby: {
+    x: WIDTH / 2,
+    y: 980,
+    scale: 1.0,
+    hitboxW: 720,
+    hitboxH: 780
+  },
+  items: {
+    baseX: WIDTH / 2,
+    y: 1580,
+    spacing: 340,
+    scale: 0.9,
+    order: ['oil', 'maga', 'hillary']
+  },
+  timer: {
+    x: 120,
+    y: 140,
+    labelSize: 96,
+    numberSize: 76,
+    pinkRectW: 220,
+    pinkRectH: 112,
+    pinkRadius: 48,
+    numberOffsetX: 460,
+    numberOffsetY: 10
+  },
+  score: {
+    x: 120,
+    y: 320,
+    size: 64
+  },
+  buttons: {
+    startY: HEIGHT - 360,
+    startScale: 0.55,
+    victoryY: HEIGHT - 360,
+    victoryScale: 0.6,
+    loseY: HEIGHT - 360,
+    loseScale: 0.6,
+    secondaryOffsetY: 200,
+    secondaryWidth: 380,
+    secondaryHeight: 120,
+    secondaryTextSize: 48
+  },
+  fonts: {
+    uiFamily: null,
+    labelScale: 1.0
+  },
+  loading: {
+    x: WIDTH / 2,
+    y: HEIGHT - 260,
+    size: 54
+  }
+};
+
 // Audio helper configuration
 let MASTER_GAIN = 0.9, MUSIC_GAIN = 0.6, SFX_GAIN = 0.9;
 let SFX = { music:null, pick:null, dropGood:null, dropBad:null, btn:null };
@@ -31,7 +85,7 @@ function setup() {
   fitCanvasCSS();
   safeMasterVolume(MASTER_GAIN);
 
-  textFont(uiFont);
+  textFont(CONFIG.fonts.uiFamily || 'sans-serif');
   textAlign(LEFT, TOP);
   imageMode(CENTER);
 
@@ -91,11 +145,19 @@ function enterState(state){
 }
 
 // Assets
-let imgBackground, imgCover, imgStartButton, imgVictory;
+let imgBackground, imgCover2, imgStartButton, imgVictory, imgAgainButton;
 let imgBabyCry, imgBabyNormal, imgBabyHappy;
 let imgOil, imgMaga, imgHillary;
+let imgRestartButton;
+let imgFormHeadline, imgSubmitBtn;
 let uiFont;
 let loseVideo;
+
+let assetsLoaded = false;
+let assetsLoading = false;
+let startRequested = false;
+let loadingMessageVisible = false;
+let loseVideoActive = false;
 
 // Game objects
 let interactables = [];
@@ -107,10 +169,7 @@ let timerActive = false;
 let shakeTimer = 0;
 let shakeIntensity = 0;
 let shakeDuration = 0;
-let loseOverlayVisible = false;
 let leadShownThisSession = false;
-
-const babyHitbox = { x: WIDTH / 2, y: 640, w: 420, h: 480 };
 
 // UI button rectangles
 let startButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 500, h: 200 };
@@ -119,50 +178,133 @@ let loseButtonRect = { x: WIDTH/2, y: HEIGHT - 380, w: 480, h: 140 };
 
 function preload(){
   safeSoundFormats('mp3','wav','ogg');
-  imgBackground = loadImage('assets/BACKGROUND.png');
-  imgCover = loadImage('assets/COVER.png');
+  imgCover2 = loadImage('assets/Cover2.png');
   imgStartButton = loadImage('assets/START BUTTON.png');
-  imgVictory = loadImage('assets/VICTORY.png');
-  imgBabyCry = loadImage('assets/BABY_CRY.png');
-  imgBabyNormal = loadImage('assets/BABY_NORMAL.png');
-  imgBabyHappy = loadImage('assets/BABY_HAPPY.png');
-  imgOil = loadImage('assets/OIL.png');
-  imgMaga = loadImage('assets/MAGA.png');
-  imgHillary = loadImage('assets/HILLARY.png');
-  uiFont = loadFont('assets/BABYBLOC.otf');
-  loseVideo = createVideo('assets/LOSE.mp4');
-  if (loseVideo && loseVideo.elt){
-    loseVideo.elt.classList.add('lose-video');
-    loseVideo.elt.setAttribute('playsinline', 'true');
-    loseVideo.elt.preload = 'auto';
-    loseVideo.volume(0);
-    loseVideo.hide();
-  }
+}
+
+function loadImageAsync(path, assign){
+  return new Promise(resolve => {
+    loadImage(path, img => {
+      if (assign) assign(img);
+      resolve();
+    }, () => resolve());
+  });
+}
+
+function loadFontAsync(path, assign){
+  return new Promise(resolve => {
+    loadFont(path, font => {
+      if (assign) assign(font);
+      resolve();
+    }, () => resolve());
+  });
+}
+
+function loadVideoAsync(path){
+  return new Promise(resolve => {
+    if (loseVideo){
+      resolve();
+      return;
+    }
+    loseVideo = createVideo(path, () => {
+      resolve();
+    });
+    configureLoseVideo();
+  });
+}
+
+function configureLoseVideo(){
+  if (!loseVideo || !loseVideo.elt) return;
+  loseVideo.elt.classList.add('lose-video');
+  loseVideo.elt.setAttribute('playsinline', 'true');
+  loseVideo.elt.preload = 'auto';
+  loseVideo.volume(0);
+  loseVideo.hide();
+  loseVideo.onended(onLoseVideoEnded);
+  loseVideo.parent('app');
+}
+
+function beginAssetLoading(){
+  if (assetsLoaded || assetsLoading) return;
+  assetsLoading = true;
+  loadingMessageVisible = true;
+  const tasks = [
+    loadImageAsync('assets/BACKGROUND.png', img => imgBackground = img),
+    loadImageAsync('assets/VICTORY.png', img => imgVictory = img),
+    loadImageAsync('assets/BABY_CRY.png', img => imgBabyCry = img),
+    loadImageAsync('assets/BABY_NORMAL.png', img => imgBabyNormal = img),
+    loadImageAsync('assets/BABY_HAPPY.png', img => imgBabyHappy = img),
+    loadImageAsync('assets/OIL.png', img => imgOil = img),
+    loadImageAsync('assets/MAGA.png', img => imgMaga = img),
+    loadImageAsync('assets/HILLARY.png', img => imgHillary = img),
+    loadImageAsync('assets/AGAIN_BUTTON.png', img => imgAgainButton = img),
+    loadImageAsync('assets/RESTART_BUTTON.png', img => imgRestartButton = img),
+    loadImageAsync('assets/FORM.png', img => imgFormHeadline = img),
+    loadImageAsync('assets/submit.png', img => imgSubmitBtn = img),
+    loadFontAsync('assets/BABYBLOC.otf', font => {
+      uiFont = font;
+      CONFIG.fonts.uiFamily = uiFont;
+    }),
+    loadVideoAsync('assets/LOSE.mp4')
+  ];
+  Promise.all(tasks).then(() => {
+    assetsLoaded = true;
+    assetsLoading = false;
+    loadingMessageVisible = false;
+    if (uiFont){
+      CONFIG.fonts.uiFamily = uiFont;
+      textFont(uiFont);
+    }
+    setupObjects();
+    resetGame();
+    if (startRequested){
+      startGame();
+    }
+  });
 }
 
 function initGame(){
   if (loseVideo){
-    loseVideo.stop();
-    loseVideo.hide();
-    loseVideo.onended(onLoseVideoEnded);
-    loseVideo.parent('app');
+    configureLoseVideo();
   }
   setupObjects();
   resetGame();
 }
 
 function setupObjects(){
-  interactables = [
-    { key:'oil', img:imgOil, delta:-1, homeX:WIDTH/2 - 320, homeY:1400, x:WIDTH/2 - 320, y:1400, w:360, h:360, hover:false, dragging:false },
-    { key:'maga', img:imgMaga, delta:-1, homeX:WIDTH/2, homeY:1400, x:WIDTH/2, y:1400, w:360, h:360, hover:false, dragging:false },
-    { key:'hillary', img:imgHillary, delta:1, homeX:WIDTH/2 + 320, homeY:1400, x:WIDTH/2 + 320, y:1400, w:360, h:360, hover:false, dragging:false }
-  ];
-  const scale = 0.75;
-  interactables.forEach(obj => {
-    if (obj.img){
-      obj.w = obj.img.width * scale;
-      obj.h = obj.img.height * scale;
-    }
+  const definitions = {
+    oil: { img: imgOil, delta: -1, defaultW: 360, defaultH: 360 },
+    maga: { img: imgMaga, delta: -1, defaultW: 360, defaultH: 360 },
+    hillary: { img: imgHillary, delta: 1, defaultW: 360, defaultH: 360 }
+  };
+  const order = CONFIG.items.order || Object.keys(definitions);
+  const baseX = CONFIG.items.baseX ?? WIDTH / 2;
+  const baseY = CONFIG.items.y ?? (HEIGHT - 320);
+  const spacing = CONFIG.items.spacing ?? 340;
+  const scale = CONFIG.items.scale ?? 1;
+  const centerOffset = (order.length - 1) / 2;
+  interactables = [];
+  order.forEach((key, index) => {
+    const def = definitions[key];
+    if (!def) return;
+    const img = def.img;
+    const w = img ? img.width * scale : def.defaultW * scale;
+    const h = img ? img.height * scale : def.defaultH * scale;
+    const homeX = baseX + (index - centerOffset) * spacing;
+    const homeY = baseY;
+    interactables.push({
+      key,
+      img,
+      delta: def.delta,
+      homeX,
+      homeY,
+      x: homeX,
+      y: homeY,
+      w,
+      h,
+      hover: false,
+      dragging: false
+    });
   });
 }
 
@@ -170,7 +312,7 @@ function resetGame(){
   babyMood = -1;
   bedtimeSeconds = 30;
   timerActive = false;
-  loseOverlayVisible = false;
+  loseVideoActive = false;
   leadShownThisSession = false;
   currentDrag = null;
   interactables.forEach(obj => {
@@ -186,7 +328,11 @@ function resetGame(){
 }
 
 function draw(){
-  background(8, 3, 15);
+  if (currentState === STATE_LOSE && loseVideoActive){
+    clear();
+  } else {
+    background(8, 3, 15);
+  }
   push();
   applyShake();
   switch(currentState){
@@ -231,24 +377,47 @@ function triggerShake(intensity = 12, duration = 180){
 
 function drawMenu(){
   imageMode(CORNER);
-  if (imgCover) image(imgCover, 0, 0, WIDTH, HEIGHT);
+  if (imgCover2) image(imgCover2, 0, 0, WIDTH, HEIGHT);
   imageMode(CENTER);
-  let btnW = imgStartButton ? imgStartButton.width : 500;
-  let btnH = imgStartButton ? imgStartButton.height : 200;
+  let btnW = 520;
+  let btnH = 220;
+  const startScale = CONFIG.buttons.startScale ?? 1;
+  const startY = CONFIG.buttons.startY ?? (HEIGHT - 360);
   if (imgStartButton){
-    const targetW = WIDTH * 0.55;
-    const scale = Math.min(1, targetW / btnW);
-    btnW *= scale;
-    btnH *= scale;
+    btnW = imgStartButton.width * startScale;
+    btnH = imgStartButton.height * startScale;
+    image(imgStartButton, WIDTH / 2, startY, btnW, btnH);
+  } else {
+    btnW *= startScale;
+    btnH *= startScale;
+    push();
+    rectMode(CENTER);
+    fill(240, 120, 180);
+    noStroke();
+    rect(WIDTH / 2, startY, btnW, btnH, 48);
+    pop();
   }
   startButtonRect.w = btnW;
   startButtonRect.h = btnH;
   startButtonRect.x = WIDTH / 2;
-  startButtonRect.y = HEIGHT - 360;
-  if (imgStartButton){
-    image(imgStartButton, startButtonRect.x, startButtonRect.y, btnW, btnH);
-  }
+  startButtonRect.y = startY;
   if (pointInRect(mouseX, mouseY, startButtonRect)) cursor('pointer'); else cursor(ARROW);
+  if (loadingMessageVisible){
+    drawLoadingMessage();
+  }
+}
+
+function drawLoadingMessage(){
+  const font = CONFIG.fonts.uiFamily || 'sans-serif';
+  const scale = CONFIG.fonts.labelScale ?? 1;
+  push();
+  textAlign(CENTER, CENTER);
+  textFont(font);
+  textSize(CONFIG.loading.size * scale);
+  fill(255, 240);
+  text('Loading...', CONFIG.loading.x, CONFIG.loading.y);
+  pop();
+  textAlign(LEFT, TOP);
 }
 
 function drawGame(){
@@ -267,22 +436,59 @@ function drawVictory(){
   imageMode(CORNER);
   if (imgVictory) image(imgVictory, 0, 0, WIDTH, HEIGHT);
   imageMode(CENTER);
-  drawButtonLabel(victoryButtonRect, "PLAY AGAIN");
-  drawSecondaryButton(victoryButtonRect.x, victoryButtonRect.y + 180, "MENU");
-  const menuRect = { x: victoryButtonRect.x, y: victoryButtonRect.y + 180, w: 380, h: 120 };
+  const victoryScale = CONFIG.buttons.victoryScale ?? 1;
+  const victoryY = CONFIG.buttons.victoryY ?? (HEIGHT - 360);
+  let btnW = 520 * victoryScale;
+  let btnH = 200 * victoryScale;
+  if (imgAgainButton){
+    btnW = imgAgainButton.width * victoryScale;
+    btnH = imgAgainButton.height * victoryScale;
+    image(imgAgainButton, WIDTH / 2, victoryY, btnW, btnH);
+  } else {
+    push();
+    rectMode(CENTER);
+    fill(245, 146, 196);
+    noStroke();
+    rect(WIDTH / 2, victoryY, btnW, btnH, 48);
+    pop();
+  }
+  victoryButtonRect.x = WIDTH / 2;
+  victoryButtonRect.y = victoryY;
+  victoryButtonRect.w = btnW;
+  victoryButtonRect.h = btnH;
+  const secondaryY = victoryY + (CONFIG.buttons.secondaryOffsetY ?? 200);
+  drawSecondaryButton(victoryButtonRect.x, secondaryY, "MENU");
+  const menuRect = {
+    x: victoryButtonRect.x,
+    y: secondaryY,
+    w: CONFIG.buttons.secondaryWidth ?? 380,
+    h: CONFIG.buttons.secondaryHeight ?? 120
+  };
   if (pointInRect(mouseX, mouseY, victoryButtonRect) || pointInRect(mouseX, mouseY, menuRect)) cursor('pointer'); else cursor(ARROW);
 }
 
 function drawLose(){
-  if (loseOverlayVisible){
+  const loseScale = CONFIG.buttons.loseScale ?? 1;
+  const loseY = CONFIG.buttons.loseY ?? (HEIGHT - 360);
+  let btnW = 520 * loseScale;
+  let btnH = 200 * loseScale;
+  if (imgRestartButton){
+    btnW = imgRestartButton.width * loseScale;
+    btnH = imgRestartButton.height * loseScale;
+    image(imgRestartButton, WIDTH / 2, loseY, btnW, btnH);
+  } else {
     push();
+    rectMode(CENTER);
+    fill(240, 90, 160, 240);
     noStroke();
-    fill(0, 0, 0, 180);
-    rect(0, 0, WIDTH, HEIGHT);
-    drawButtonLabel(loseButtonRect, "TRY AGAIN");
+    rect(WIDTH / 2, loseY, btnW, btnH, 48);
     pop();
-    if (pointInRect(mouseX, mouseY, loseButtonRect)) cursor('pointer'); else cursor(ARROW);
   }
+  loseButtonRect.x = WIDTH / 2;
+  loseButtonRect.y = loseY;
+  loseButtonRect.w = btnW;
+  loseButtonRect.h = btnH;
+  if (pointInRect(mouseX, mouseY, loseButtonRect)) cursor('pointer'); else cursor(ARROW);
 }
 
 function drawLeadPause(){
@@ -291,41 +497,31 @@ function drawLeadPause(){
   } else {
     drawGame();
   }
-  push();
-  noStroke();
-  fill(15, 5, 32, 210);
-  rect(0, 0, WIDTH, HEIGHT);
-  pop();
-}
-
-function drawButtonLabel(rectObj, label){
-  push();
-  textAlign(CENTER, CENTER);
-  textFont(uiFont);
-  const shadow = drawingContext;
-  shadow.shadowColor = 'rgba(52, 12, 41, 0.6)';
-  shadow.shadowBlur = 24;
-  shadow.shadowOffsetX = 0;
-  shadow.shadowOffsetY = 12;
-  fill(255);
-  rectMode(CENTER);
-  stroke(255, 120, 192);
-  strokeWeight(6);
-  fill(243, 86, 157);
-  rect(rectObj.x, rectObj.y, rectObj.w, rectObj.h, 38);
-  noStroke();
-  fill(255);
-  textSize(64);
-  text(label, rectObj.x, rectObj.y + 6);
-  pop();
-  textAlign(LEFT, TOP);
+  if (leadOverlay && leadOverlay.style.display !== 'none'){
+    push();
+    noStroke();
+    fill(15, 5, 32, 210);
+    rect(0, 0, WIDTH, HEIGHT);
+    pop();
+  }
+  if (loadingMessageVisible){
+    drawLoadingMessage();
+  }
 }
 
 function drawSecondaryButton(cx, cy, label){
-  const rectObj = { x: cx, y: cy, w: 380, h: 120 };
+  const cfg = CONFIG.buttons;
+  const rectObj = {
+    x: cx,
+    y: cy,
+    w: cfg.secondaryWidth ?? 380,
+    h: cfg.secondaryHeight ?? 120
+  };
+  const font = CONFIG.fonts.uiFamily || 'sans-serif';
+  const scale = CONFIG.fonts.labelScale ?? 1;
   push();
   textAlign(CENTER, CENTER);
-  textFont(uiFont);
+  textFont(font);
   fill(255, 230);
   rectMode(CENTER);
   stroke(255);
@@ -334,7 +530,7 @@ function drawSecondaryButton(cx, cy, label){
   rect(rectObj.x, rectObj.y, rectObj.w, rectObj.h, 32);
   noStroke();
   fill(131, 37, 65);
-  textSize(54);
+  textSize((cfg.secondaryTextSize ?? 48) * scale);
   text(label, rectObj.x, rectObj.y + 5);
   pop();
 }
@@ -344,7 +540,10 @@ function drawBaby(){
   if (babyMood >= 1) sprite = imgBabyHappy;
   else if (babyMood === 0) sprite = imgBabyNormal;
   if (sprite){
-    image(sprite, WIDTH/2, 680, sprite.width, sprite.height);
+    const drawScale = CONFIG.baby.scale ?? 1;
+    const w = sprite.width * drawScale;
+    const h = sprite.height * drawScale;
+    image(sprite, CONFIG.baby.x, CONFIG.baby.y, w, h);
   }
   noFill();
 }
@@ -383,43 +582,49 @@ function drawInteractables(){
 
 function drawBedtimeTimer(){
   push();
-  textFont(uiFont);
-  textSize(96);
+  const font = CONFIG.fonts.uiFamily || 'sans-serif';
+  const scale = CONFIG.fonts.labelScale ?? 1;
+  const cfg = CONFIG.timer;
+  textFont(font);
+  textSize(cfg.labelSize * scale);
   textAlign(LEFT, CENTER);
-  const x = 70;
-  const y = 100;
+  const x = cfg.x;
+  const y = cfg.y;
   drawingContext.shadowColor = 'rgba(58, 18, 34, 0.5)';
   drawingContext.shadowBlur = 12;
   fill(255, 238, 243);
   text('BEDTIME', x, y);
-  const badgeX = x + 420;
+  const badgeX = x + cfg.numberOffsetX;
   const badgeY = y;
-  const badgeW = 200;
-  const badgeH = 110;
+  const badgeW = cfg.pinkRectW;
+  const badgeH = cfg.pinkRectH;
   rectMode(CENTER);
   stroke(255);
   strokeWeight(4);
   fill(255, 138, 181);
-  rect(badgeX, badgeY + 6, badgeW, badgeH, 48);
+  rect(badgeX, badgeY + 6, badgeW, badgeH, cfg.pinkRadius);
   noStroke();
   fill(255);
   textAlign(CENTER, CENTER);
-  textSize(72);
+  textSize(cfg.numberSize * scale);
   const display = Math.max(0, Math.ceil(bedtimeSeconds));
-  text(display.toString(), badgeX, badgeY + 10);
+  text(display.toString(), badgeX, badgeY + cfg.numberOffsetY);
   pop();
   textAlign(LEFT, TOP);
 }
 
 function drawScore(){
   push();
-  textFont(uiFont);
+  const font = CONFIG.fonts.uiFamily || 'sans-serif';
+  const scale = CONFIG.fonts.labelScale ?? 1;
+  const cfg = CONFIG.score;
+  textFont(font);
   textAlign(LEFT, TOP);
   drawingContext.shadowColor = 'rgba(58, 18, 34, 0.4)';
   drawingContext.shadowBlur = 10;
   fill(255, 228, 240);
-  textSize(64);
-  text(`SCORE ${score}`, 70, 220);
+  textSize(cfg.size * scale);
+  text(`SCORE ${score}`, cfg.x, cfg.y);
   pop();
 }
 
@@ -442,6 +647,8 @@ function mousePressed(){
   if (currentState === STATE_MENU){
     if (pointInRect(mouseX, mouseY, startButtonRect)){
       playSfx('btn');
+      startRequested = true;
+      beginAssetLoading();
       if (shouldShowLeadDesktop()){
         enterLeadDesktop();
       } else {
@@ -454,10 +661,16 @@ function mousePressed(){
     if (pointInRect(mouseX, mouseY, victoryButtonRect)){
       playSfx('btn');
       resetGame();
+      startRequested = true;
       startGame();
       return;
     }
-    const menuRect = { x: victoryButtonRect.x, y: victoryButtonRect.y + 180, w: 380, h: 120 };
+    const menuRect = {
+      x: victoryButtonRect.x,
+      y: victoryButtonRect.y + (CONFIG.buttons.secondaryOffsetY ?? 200),
+      w: CONFIG.buttons.secondaryWidth ?? 380,
+      h: CONFIG.buttons.secondaryHeight ?? 120
+    };
     if (pointInRect(mouseX, mouseY, menuRect)){
       playSfx('btn');
       resetGame();
@@ -466,9 +679,10 @@ function mousePressed(){
     return;
   }
   if (currentState === STATE_LOSE){
-    if (loseOverlayVisible && pointInRect(mouseX, mouseY, loseButtonRect)){
+    if (pointInRect(mouseX, mouseY, loseButtonRect)){
       playSfx('btn');
       resetGame();
+      startRequested = true;
       startGame();
     }
     return;
@@ -505,7 +719,7 @@ function mouseReleased(){
   const obj = currentDrag;
   obj.dragging = false;
   cursor(ARROW);
-  const droppedInside = pointInRect(obj.x, obj.y, babyHitbox);
+  const droppedInside = pointInRect(obj.x, obj.y, getBabyHitbox());
   if (droppedInside){
     babyMood += obj.delta;
     babyMood = constrain(babyMood, -2, 1);
@@ -545,9 +759,21 @@ function pointInRect(px, py, rectObj){
   return px >= rectObj.x && px <= rectObj.x + w && py >= rectObj.y && py <= rectObj.y + h;
 }
 
+function getBabyHitbox(){
+  return {
+    x: CONFIG.baby.x,
+    y: CONFIG.baby.y,
+    w: CONFIG.baby.hitboxW,
+    h: CONFIG.baby.hitboxH
+  };
+}
+
 function enterStateMenu(){
   cursor(ARROW);
   leadShownThisSession = false;
+  if (!assetsLoading){
+    loadingMessageVisible = false;
+  }
 }
 function exitStateMenu(){}
 
@@ -565,13 +791,15 @@ function exitStateVictory(){}
 
 function enterStateLose(){
   cursor(ARROW);
-  if (loseVideo){
+  const hasVideo = !!loseVideo;
+  if (hasVideo){
     loseVideo.show();
     loseVideo.style('display', 'block');
     loseVideo.noLoop();
     loseVideo.time(0);
     loseVideo.play();
   }
+  loseVideoActive = hasVideo;
 }
 function exitStateLose(){
   if (loseVideo){
@@ -579,7 +807,7 @@ function exitStateLose(){
     loseVideo.hide();
     loseVideo.style('display', 'none');
   }
-  loseOverlayVisible = false;
+  loseVideoActive = false;
 }
 
 function enterStateLead(){
@@ -588,6 +816,14 @@ function enterStateLead(){
 function exitStateLead(){}
 
 function startGame(){
+  if (!assetsLoaded){
+    beginAssetLoading();
+    startRequested = true;
+    loadingMessageVisible = true;
+    return;
+  }
+  startRequested = false;
+  loadingMessageVisible = false;
   if (leadOverlay && leadOverlay.style){
     leadOverlay.style.display = 'none';
   }
@@ -604,13 +840,17 @@ function enterVictory(){
 function lose(){
   if (currentState === STATE_LOSE) return;
   timerActive = false;
-  loseOverlayVisible = false;
   currentDrag = null;
   setState(STATE_LOSE);
 }
 
 function onLoseVideoEnded(){
-  loseOverlayVisible = true;
+  loseVideoActive = false;
+  if (loseVideo){
+    loseVideo.stop();
+    loseVideo.hide();
+    loseVideo.style('display', 'none');
+  }
 }
 
 // Lead generation implementation
@@ -620,8 +860,8 @@ let leadOverlay = null;
 let leadForm = null;
 let leadError = null;
 let leadSuccess = null;
-let leadCloseButton = null;
 let leadSubmitButton = null;
+let leadSubmitImage = null;
 let leadPending = false;
 
 function createLeadUI(){
@@ -633,24 +873,35 @@ function createLeadUI(){
   const card = document.createElement('div');
   card.className = 'lead-card';
 
-  leadCloseButton = document.createElement('button');
-  leadCloseButton.className = 'lead-close';
-  leadCloseButton.type = 'button';
-  leadCloseButton.textContent = 'Cerrar';
-  leadCloseButton.addEventListener('click', () => exitLeadDesktopAndGoTutorial());
-
-  const title = document.createElement('h2');
-  title.textContent = 'Join the Crib List';
-  const desc = document.createElement('p');
-  desc.textContent = 'Recibí noticias frescas del bebé más caprichoso del multiverso y desbloqueá recompensas exclusivas.';
-
   leadForm = document.createElement('form');
   leadForm.className = 'lead-form';
   leadForm.addEventListener('submit', onLeadSubmit);
 
-  const nameField = createInputField('Nombre', 'name', 'text');
-  const emailField = createInputField('Email', 'email', 'email');
-  const roleField = createSelectField('Rol', 'role', ['Padre/Madre', 'Tío/Tía', 'Periodista', 'Otro']);
+  const headline = document.createElement('img');
+  headline.className = 'lead-headline';
+  headline.src = 'assets/FORM.png';
+  headline.alt = '';
+
+  const firstNameInput = document.createElement('input');
+  firstNameInput.type = 'text';
+  firstNameInput.name = 'firstName';
+  firstNameInput.placeholder = 'First Name';
+  firstNameInput.required = true;
+  firstNameInput.autocomplete = 'given-name';
+
+  const lastNameInput = document.createElement('input');
+  lastNameInput.type = 'text';
+  lastNameInput.name = 'lastName';
+  lastNameInput.placeholder = 'Last Name';
+  lastNameInput.required = true;
+  lastNameInput.autocomplete = 'family-name';
+
+  const emailInput = document.createElement('input');
+  emailInput.type = 'email';
+  emailInput.name = 'email';
+  emailInput.placeholder = 'Email';
+  emailInput.required = true;
+  emailInput.autocomplete = 'email';
 
   leadError = document.createElement('div');
   leadError.className = 'lead-error';
@@ -658,57 +909,37 @@ function createLeadUI(){
   leadSuccess.className = 'lead-success';
 
   leadSubmitButton = document.createElement('button');
-  leadSubmitButton.className = 'lead-submit';
   leadSubmitButton.type = 'submit';
-  leadSubmitButton.textContent = 'Enviar';
+  leadSubmitButton.className = 'lead-submit-native';
+  leadSubmitButton.style.position = 'absolute';
+  leadSubmitButton.style.left = '-9999px';
+  leadSubmitButton.style.width = '1px';
+  leadSubmitButton.style.height = '1px';
+  leadSubmitButton.style.overflow = 'hidden';
 
-  leadForm.appendChild(nameField.wrapper);
-  leadForm.appendChild(emailField.wrapper);
-  leadForm.appendChild(roleField.wrapper);
+  leadSubmitImage = document.createElement('img');
+  leadSubmitImage.className = 'lead-submit-image';
+  leadSubmitImage.src = 'assets/submit.png';
+  leadSubmitImage.alt = 'Submit';
+  leadSubmitImage.dataset.disabled = 'false';
+  leadSubmitImage.addEventListener('click', () => {
+    if (!leadPending){
+      leadForm.requestSubmit();
+    }
+  });
+
+  leadForm.appendChild(firstNameInput);
+  leadForm.appendChild(lastNameInput);
+  leadForm.appendChild(emailInput);
   leadForm.appendChild(leadError);
   leadForm.appendChild(leadSuccess);
   leadForm.appendChild(leadSubmitButton);
 
-  card.appendChild(leadCloseButton);
-  card.appendChild(title);
-  card.appendChild(desc);
+  card.appendChild(headline);
   card.appendChild(leadForm);
+  card.appendChild(leadSubmitImage);
   leadOverlay.appendChild(card);
   app.appendChild(leadOverlay);
-}
-
-function createInputField(labelText, name, type){
-  const wrapper = document.createElement('label');
-  wrapper.textContent = labelText;
-  const input = document.createElement('input');
-  input.name = name;
-  input.type = type;
-  input.required = true;
-  input.autocomplete = 'on';
-  wrapper.appendChild(input);
-  return { wrapper, input };
-}
-
-function createSelectField(labelText, name, options){
-  const wrapper = document.createElement('label');
-  wrapper.textContent = labelText;
-  const select = document.createElement('select');
-  select.name = name;
-  select.required = true;
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.textContent = 'Seleccioná una opción';
-  placeholder.disabled = true;
-  placeholder.selected = true;
-  select.appendChild(placeholder);
-  options.forEach(opt => {
-    const option = document.createElement('option');
-    option.value = opt;
-    option.textContent = opt;
-    select.appendChild(option);
-  });
-  wrapper.appendChild(select);
-  return { wrapper, select };
 }
 
 function positionLeadUI(){
@@ -736,6 +967,7 @@ function enterLeadDesktop(){
     }
     leadPending = false;
     if (leadSubmitButton) leadSubmitButton.disabled = false;
+    if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
     if (leadError) leadError.textContent = '';
     if (leadSuccess) leadSuccess.textContent = '';
     const firstInput = leadOverlay.querySelector('input, select');
@@ -762,6 +994,8 @@ function exitLeadDesktopAndGoTutorial(){
   }
   leadPending = false;
   if (leadSubmitButton) leadSubmitButton.disabled = false;
+  if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
+  startRequested = true;
   startGame();
 }
 
@@ -769,10 +1003,10 @@ function onLeadSubmit(event){
   event.preventDefault();
   if (leadPending) return;
   const formData = new FormData(leadForm);
-  const name = (formData.get('name') || '').toString().trim();
+  const firstName = (formData.get('firstName') || '').toString().trim();
+  const lastName = (formData.get('lastName') || '').toString().trim();
   const email = (formData.get('email') || '').toString().trim();
-  const role = (formData.get('role') || '').toString();
-  if (!name || !email || !role){
+  if (!firstName || !lastName || !email){
     leadError.textContent = 'Completá todos los campos.';
     return;
   }
@@ -784,7 +1018,8 @@ function onLeadSubmit(event){
   leadSuccess.textContent = 'Enviando...';
   leadPending = true;
   leadSubmitButton.disabled = true;
-  const payload = { name, email, role, timestamp: new Date().toISOString() };
+  if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'true';
+  const payload = { firstName, lastName, email, timestamp: new Date().toISOString() };
   sendLeadToSheet(payload)
     .then(() => {
       leadSuccess.textContent = '¡Listo! Revisá tu correo pronto.';
@@ -795,6 +1030,7 @@ function onLeadSubmit(event){
       }
       leadPending = false;
       leadSubmitButton.disabled = false;
+      if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
       setTimeout(() => exitLeadDesktopAndGoTutorial(), 800);
     })
     .catch(() => {
@@ -802,6 +1038,7 @@ function onLeadSubmit(event){
       leadSuccess.textContent = '';
       leadSubmitButton.disabled = false;
       leadPending = false;
+      if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
     });
 }
 

@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Whiny Baby Wesley</title>
   <style>
+    @font-face {
+      font-family: 'BabyBloc';
+      src: url('assets/BABYBLOC.otf') format('opentype');
+      font-display: swap;
+    }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
@@ -23,6 +28,10 @@
       justify-content: center;
       touch-action: manipulation;
     }
+    #app canvas {
+      position: relative;
+      z-index: 20;
+    }
     .lead-overlay {
       position: absolute;
       inset: 0;
@@ -32,6 +41,7 @@
       padding: 32px;
       background: rgba(13, 5, 21, 0.88);
       z-index: 40;
+      font-family: 'BabyBloc', sans-serif;
     }
     .lead-card {
       width: min(460px, 90vw);
@@ -42,33 +52,13 @@
       display: flex;
       flex-direction: column;
       gap: 18px;
-    }
-    .lead-card h2 {
-      margin: 0;
-      font-size: 2rem;
-      color: #9c2550;
-      text-align: left;
-      text-transform: uppercase;
-    }
-    .lead-card p {
-      margin: 0;
-      line-height: 1.4;
-      color: #422012;
-      font-size: 1rem;
-      text-align: left;
+      font-family: 'BabyBloc', sans-serif;
     }
     .lead-form {
       display: flex;
       flex-direction: column;
       gap: 16px;
-    }
-    .lead-form label {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      font-weight: 600;
-      color: #5a1f34;
-      text-transform: uppercase;
+      font-family: 'BabyBloc', sans-serif;
     }
     .lead-form input, .lead-form select {
       padding: 12px 14px;
@@ -77,6 +67,7 @@
       font-size: 1rem;
       background: #fff0f6;
       color: #351112;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     }
     .lead-form input:focus, .lead-form select:focus {
       outline: none;
@@ -88,35 +79,30 @@
       font-size: 0.85rem;
       min-height: 1em;
     }
-    .lead-submit {
-      padding: 14px 20px;
-      border-radius: 16px;
-      border: none;
-      font-size: 1.05rem;
-      font-weight: 700;
-      color: white;
-      background: linear-gradient(135deg, #f77ab1, #c23d72);
-      cursor: pointer;
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-      text-transform: uppercase;
-    }
-    .lead-submit:active {
-      transform: scale(0.97);
-      box-shadow: 0 12px 24px rgba(194,61,114,0.4);
-    }
-    .lead-close {
-      background: none;
-      border: none;
-      color: #c23d72;
-      font-size: 0.95rem;
-      font-weight: 600;
-      cursor: pointer;
-      align-self: flex-end;
-    }
     .lead-success {
       font-size: 0.95rem;
       color: #2d7f4e;
       min-height: 1em;
+    }
+    .lead-headline {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .lead-submit-image {
+      width: min(320px, 60%);
+      height: auto;
+      align-self: center;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+    .lead-submit-image[data-disabled="true"] {
+      pointer-events: none;
+      opacity: 0.6;
+      transform: none !important;
+    }
+    .lead-submit-image:active {
+      transform: scale(0.97);
     }
     video.lose-video {
       position: absolute;
@@ -125,7 +111,8 @@
       height: 100%;
       object-fit: cover;
       display: none;
-      z-index: 30;
+      z-index: 10;
+      pointer-events: none;
     }
   </style>
 </head>
