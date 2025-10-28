@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Whiny Baby Wesley</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #1d1123;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      color: #2b1a10;
+    }
+    #app {
+      position: relative;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: manipulation;
+    }
+    .lead-overlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+      background: rgba(13, 5, 21, 0.88);
+      z-index: 40;
+    }
+    .lead-card {
+      width: min(460px, 90vw);
+      background: #ffe7f0;
+      border-radius: 24px;
+      padding: 32px;
+      box-shadow: 0 24px 48px rgba(0,0,0,0.35);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .lead-card h2 {
+      margin: 0;
+      font-size: 2rem;
+      color: #9c2550;
+      text-align: left;
+      text-transform: uppercase;
+    }
+    .lead-card p {
+      margin: 0;
+      line-height: 1.4;
+      color: #422012;
+      font-size: 1rem;
+      text-align: left;
+    }
+    .lead-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .lead-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-weight: 600;
+      color: #5a1f34;
+      text-transform: uppercase;
+    }
+    .lead-form input, .lead-form select {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 2px solid rgba(156, 37, 80, 0.2);
+      font-size: 1rem;
+      background: #fff0f6;
+      color: #351112;
+    }
+    .lead-form input:focus, .lead-form select:focus {
+      outline: none;
+      border-color: #e4548a;
+      box-shadow: 0 0 0 3px rgba(228, 84, 138, 0.25);
+    }
+    .lead-error {
+      color: #c0133c;
+      font-size: 0.85rem;
+      min-height: 1em;
+    }
+    .lead-submit {
+      padding: 14px 20px;
+      border-radius: 16px;
+      border: none;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: white;
+      background: linear-gradient(135deg, #f77ab1, #c23d72);
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      text-transform: uppercase;
+    }
+    .lead-submit:active {
+      transform: scale(0.97);
+      box-shadow: 0 12px 24px rgba(194,61,114,0.4);
+    }
+    .lead-close {
+      background: none;
+      border: none;
+      color: #c23d72;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      align-self: flex-end;
+    }
+    .lead-success {
+      font-size: 0.95rem;
+      color: #2d7f4e;
+      min-height: 1em;
+    }
+    video.lose-video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+      z-index: 30;
+    }
+  </style>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.2/p5.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.2/addons/p5.sound.min.js" defer></script>
+<script defer>
+  window.addEventListener('pointerdown', () => {
+    try {
+      const ac = (window.getAudioContext && window.getAudioContext()) || null;
+      if (ac && ac.state !== 'running') ac.resume();
+    } catch (e) { /* no-op */ }
+  }, { once: true, passive: true });
+</script>
+<div id="app"></div>
+<script src="sketch.js" defer></script>
+</body>
+</html>
