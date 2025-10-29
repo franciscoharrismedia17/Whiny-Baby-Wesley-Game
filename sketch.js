@@ -461,6 +461,83 @@ function draw(){
       break;
   }
   pop();
+  if (tutorialVisible){
+    drawTutorialOverlayGraphics();
+  }
+}
+
+function drawTutorialOverlayGraphics(){
+  push();
+  resetMatrix();
+  rectMode(CORNER);
+  noStroke();
+  fill(0, 0, 0, 180);
+  rect(0, 0, WIDTH, HEIGHT);
+
+  const uiFont = CONFIG.fonts.uiFamily || 'BabyBloc';
+  const baseFontSize = 64;
+  const fontScale = WIDTH / 1080;
+  const fontSize = baseFontSize * fontScale;
+  textAlign(CENTER, CENTER);
+  textFont(uiFont);
+  textSize(fontSize);
+  textLeading(fontSize * 1.1);
+  fill(255);
+  drawingContext.shadowColor = 'rgba(0, 0, 0, 0.45)';
+  drawingContext.shadowBlur = 18;
+  const message = 'Help Whiny Baby Wesley Hunt!\nDrag and drop the right item to help him fall asleep.';
+  const textBoxWidth = WIDTH * 0.8;
+  const textBoxHeight = HEIGHT * 0.35;
+  const textBoxX = (WIDTH - textBoxWidth) / 2;
+  const textBoxY = HEIGHT * 0.28;
+  text(message, textBoxX, textBoxY, textBoxWidth, textBoxHeight);
+  drawingContext.shadowBlur = 0;
+  drawingContext.shadowColor = 'transparent';
+
+  const startObj = interactables.length ? interactables[0] : null;
+  const fallbackOrder = CONFIG.items.order || [];
+  const fallbackCenterOffset = (fallbackOrder.length - 1) / 2;
+  const fallbackBaseX = CONFIG.items.baseX ?? WIDTH / 2;
+  const fallbackSpacing = CONFIG.items.spacing ?? 340;
+  const fallbackY = CONFIG.items.y ?? (HEIGHT - 320);
+  const startX = startObj ? startObj.x : fallbackBaseX + (0 - fallbackCenterOffset) * fallbackSpacing;
+  const startY = startObj ? startObj.y : fallbackY;
+  const babyHitbox = getBabyHitbox();
+  const endX = babyHitbox.x;
+  const endY = babyHitbox.y;
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const angle = Math.atan2(dy, dx);
+  const headLength = 120;
+  const dt = (typeof deltaTime === 'number' && !Number.isNaN(deltaTime)) ? deltaTime : 16.6667;
+  tutorialArrowPhase = (tutorialArrowPhase + dt) % 1800;
+  const strokePulse = 16 + 4 * Math.sin((tutorialArrowPhase / 1800) * TWO_PI * 2);
+  const lineEndX = endX - Math.cos(angle) * headLength;
+  const lineEndY = endY - Math.sin(angle) * headLength;
+  const arrowColor = color(255, 236, 252);
+  stroke(arrowColor);
+  strokeWeight(strokePulse);
+  strokeCap(ROUND);
+  strokeJoin(ROUND);
+  line(startX, startY, lineEndX, lineEndY);
+  noStroke();
+  fill(arrowColor);
+  const headWidth = 70;
+  const leftX = endX - Math.cos(angle) * headLength + Math.sin(angle) * headWidth * 0.5;
+  const leftY = endY - Math.sin(angle) * headLength - Math.cos(angle) * headWidth * 0.5;
+  const rightX = endX - Math.cos(angle) * headLength - Math.sin(angle) * headWidth * 0.5;
+  const rightY = endY - Math.sin(angle) * headLength + Math.cos(angle) * headWidth * 0.5;
+  triangle(endX, endY, leftX, leftY, rightX, rightY);
+
+  const travelCycle = 1200;
+  const travelPhase = (tutorialArrowPhase % travelCycle) / travelCycle;
+  const highlightX = lerp(startX, lineEndX, travelPhase);
+  const highlightY = lerp(startY, lineEndY, travelPhase);
+  const dotSize = 34 + 10 * Math.sin((tutorialArrowPhase / travelCycle) * TWO_PI);
+  fill(255, 248, 255, 235);
+  ellipse(highlightX, highlightY, dotSize, dotSize);
+
+  pop();
 }
 
 function applyShake(){
@@ -753,6 +830,10 @@ function handlePointerPress(x, y){
   if (lastPointerPressFrame === frameCount) return false;
   lastPointerPressFrame = frameCount;
   ensureAudioContext();
+  if (tutorialVisible){
+    hideTutorialOverlay();
+    return true;
+  }
   if (currentState === STATE_MENU){
     if (pointInRect(x, y, startButtonRect)){
       playSound('button');
@@ -817,6 +898,7 @@ function touchStarted(){
 }
 
 function mouseDragged(){
+  if (tutorialVisible) return;
   if (currentDrag){
     currentDrag.x = mouseX;
     currentDrag.y = mouseY;
@@ -825,6 +907,7 @@ function mouseDragged(){
 }
 
 function mouseReleased(){
+  if (tutorialVisible) return;
   if (!currentDrag) return;
   const obj = currentDrag;
   obj.dragging = false;
@@ -849,6 +932,7 @@ function mouseReleased(){
 }
 
 function touchMoved(){
+  if (tutorialVisible) return;
   if (currentDrag){
     mouseDragged();
     return false;
@@ -856,6 +940,7 @@ function touchMoved(){
 }
 
 function touchEnded(){
+  if (tutorialVisible) return;
   if (currentDrag){
     mouseReleased();
     return false;
@@ -1083,7 +1168,7 @@ const LEAD_STORAGE_KEY = 'wbw_lead_data_v1';
 const LEAD_SUBMITTED_KEY = 'wbw_lead_submitted_v1';
 const LEAD_QUEUE_KEY = 'wbw_lead_queue_v1';
 const LEAD_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxDzVhcizXvcVpe3iYHhT_w64gRG6EUVGscVmxWj9vkpZzg2yu4ZRGayMf56EEN68pl/exec';
-const TUTORIAL_SHOWN_KEY = 'tutorialShown_v1';
+const TUTORIAL_SHOWN_KEY = 'tutorialShown_v3';
 let leadOverlay = null;
 let leadForm = null;
 let leadError = null;
@@ -1092,10 +1177,10 @@ let leadSubmitButton = null;
 let leadSubmitImage = null;
 let leadPending = false;
 let tutorialOverlay = null;
-let tutorialText = null;
 let tutorialVisible = false;
 let tutorialDismissCallback = null;
 let tutorialSeen = false;
+let tutorialArrowPhase = 0;
 
 function createLeadUI(){
   const app = document.getElementById('app');
@@ -1222,28 +1307,12 @@ function createTutorialOverlay(){
   style.top = '0px';
   style.display = 'none';
   style.opacity = '0';
-  style.alignItems = 'center';
-  style.justifyContent = 'center';
-  style.background = 'rgba(0, 0, 0, 0.7)';
-  style.color = '#fff';
+  style.background = 'rgba(0, 0, 0, 0)';
   style.pointerEvents = 'none';
-  style.padding = '48px';
   style.boxSizing = 'border-box';
-  style.textAlign = 'center';
-  style.whiteSpace = 'pre-line';
   style.zIndex = '30';
-  style.fontFamily = CONFIG.fonts.uiFamily || 'sans-serif';
-
-  tutorialText = document.createElement('div');
-  tutorialText.className = 'tutorial-overlay-text';
-  tutorialText.textContent = 'Help Whiny Baby Wesley Hunt!\nDrag and drop the right item to help him fall asleep.';
-  const textStyle = tutorialText.style;
-  textStyle.margin = '0 auto';
-  textStyle.maxWidth = '80%';
-  textStyle.lineHeight = '1.4';
-  textStyle.whiteSpace = 'pre-line';
-
-  tutorialOverlay.appendChild(tutorialText);
+  style.cursor = 'pointer';
+  style.transition = 'opacity 0.2s ease-out';
 
   const dismiss = (event) => {
     if (event){
@@ -1261,7 +1330,7 @@ function createTutorialOverlay(){
 
 function updateTutorialOverlayFont(){
   if (!tutorialOverlay) return;
-  tutorialOverlay.style.fontFamily = CONFIG.fonts.uiFamily || 'sans-serif';
+  tutorialOverlay.style.fontFamily = '"BabyBloc", sans-serif';
 }
 
 function applyTutorialOverlaySizing(rect){
@@ -1270,8 +1339,6 @@ function applyTutorialOverlaySizing(rect){
   tutorialOverlay.style.top = '0px';
   tutorialOverlay.style.width = `${rect.width}px`;
   tutorialOverlay.style.height = `${rect.height}px`;
-  const fontSize = Math.max(20, Math.min(44, rect.width * 0.045));
-  tutorialOverlay.style.fontSize = `${fontSize}px`;
 }
 
 function showTutorialOverlay(options = {}){
@@ -1282,11 +1349,12 @@ function showTutorialOverlay(options = {}){
   const { onDismiss } = options;
   tutorialVisible = true;
   tutorialDismissCallback = typeof onDismiss === 'function' ? onDismiss : null;
-  tutorialOverlay.style.display = 'flex';
+  tutorialOverlay.style.display = 'block';
   tutorialOverlay.style.opacity = '1';
   tutorialOverlay.style.pointerEvents = 'auto';
   updateTutorialOverlayFont();
   positionLeadUI();
+  tutorialArrowPhase = 0;
   return true;
 }
 
