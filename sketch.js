@@ -474,7 +474,7 @@ function drawTutorialOverlayGraphics(){
   fill(0, 0, 0, 180);
   rect(0, 0, WIDTH, HEIGHT);
 
-  const uiFont = CONFIG.fonts.uiFamily || 'BabyBloc';
+  const uiFont = 'Helvetica, Arial, sans-serif';
   const baseFontSize = 64;
   const fontScale = WIDTH / 1080;
   const fontSize = baseFontSize * fontScale;
@@ -511,10 +511,10 @@ function drawTutorialOverlayGraphics(){
   const headLength = 120;
   const dt = (typeof deltaTime === 'number' && !Number.isNaN(deltaTime)) ? deltaTime : 16.6667;
   tutorialArrowPhase = (tutorialArrowPhase + dt) % 1800;
-  const strokePulse = 16 + 4 * Math.sin((tutorialArrowPhase / 1800) * TWO_PI * 2);
+  const strokePulse = 8 + 2 * Math.sin((tutorialArrowPhase / 1800) * TWO_PI * 2);
   const lineEndX = endX - Math.cos(angle) * headLength;
   const lineEndY = endY - Math.sin(angle) * headLength;
-  const arrowColor = color(255, 236, 252);
+  const arrowColor = color(255, 244, 252, 220);
   stroke(arrowColor);
   strokeWeight(strokePulse);
   strokeCap(ROUND);
@@ -1330,7 +1330,7 @@ function createTutorialOverlay(){
 
 function updateTutorialOverlayFont(){
   if (!tutorialOverlay) return;
-  tutorialOverlay.style.fontFamily = '"BabyBloc", sans-serif';
+  tutorialOverlay.style.fontFamily = 'Helvetica, Arial, sans-serif';
 }
 
 function applyTutorialOverlaySizing(rect){
