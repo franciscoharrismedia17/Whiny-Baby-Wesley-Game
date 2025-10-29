@@ -237,6 +237,10 @@ let shakeIntensity = 0;
 let shakeDuration = 0;
 let happyTimer = 0;
 const HAPPY_HOLD_MS = 1200;
+const HILLARY_VICTORY_DELAY_MS = 1700;
+let hillaryVictoryPending = false;
+let hillaryVictoryTimeout = null;
+let playInputLocked = false;
 
 // UI button rectangles
 let startButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 500, h: 200 };
@@ -423,6 +427,9 @@ function resetGame(){
   loseVideoActive = false;
   currentDrag = null;
   happyTimer = 0;
+  clearHillaryVictoryTimeout();
+  hillaryVictoryPending = false;
+  playInputLocked = false;
   interactables.forEach(obj => {
     obj.x = obj.homeX;
     obj.y = obj.homeY;
@@ -615,9 +622,13 @@ function drawGame(){
   drawBaby();
   drawInteractables();
   if (babyMood === 1){
-    happyTimer += deltaTime;
-    if (happyTimer >= HAPPY_HOLD_MS){
-      enterVictory();
+    if (hillaryVictoryPending){
+      happyTimer = 0;
+    } else {
+      happyTimer += deltaTime;
+      if (happyTimer >= HAPPY_HOLD_MS){
+        enterVictory();
+      }
     }
   } else {
     happyTimer = 0;
@@ -834,6 +845,9 @@ function handlePointerPress(x, y){
     hideTutorialOverlay();
     return true;
   }
+  if (currentState === STATE_PLAY && playInputLocked){
+    return true;
+  }
   if (currentState === STATE_MENU){
     if (pointInRect(x, y, startButtonRect)){
       playSound('button');
@@ -899,6 +913,7 @@ function touchStarted(){
 
 function mouseDragged(){
   if (tutorialVisible) return;
+  if (currentState === STATE_PLAY && playInputLocked) return;
   if (currentDrag){
     currentDrag.x = mouseX;
     currentDrag.y = mouseY;
@@ -908,6 +923,14 @@ function mouseDragged(){
 
 function mouseReleased(){
   if (tutorialVisible) return;
+  if (currentState === STATE_PLAY && playInputLocked){
+    if (currentDrag){
+      currentDrag.dragging = false;
+      currentDrag = null;
+    }
+    cursor(ARROW);
+    return;
+  }
   if (!currentDrag) return;
   const obj = currentDrag;
   obj.dragging = false;
@@ -916,11 +939,22 @@ function mouseReleased(){
   const droppedInside = pointInRect(obj.x, obj.y, getBabyHitbox());
   if (droppedInside){
     if (obj.key === 'hillary'){
-      setBabyMood(1);
       obj.x = obj.homeX;
       obj.y = obj.homeY;
-      score += 1;
-      enterVictory();
+      if (!hillaryVictoryPending){
+        setBabyMood(1);
+        score += 1;
+        hillaryVictoryPending = true;
+        playInputLocked = true;
+        timerActive = false;
+        clearHillaryVictoryTimeout();
+        hillaryVictoryTimeout = setTimeout(() => {
+          hillaryVictoryTimeout = null;
+          if (currentState === STATE_PLAY){
+            enterVictory();
+          }
+        }, HILLARY_VICTORY_DELAY_MS);
+      }
     } else {
       const mood = adjustBabyMood(obj.delta);
       obj.x = obj.homeX;
@@ -941,6 +975,7 @@ function mouseReleased(){
 
 function touchMoved(){
   if (tutorialVisible) return;
+  if (currentState === STATE_PLAY && playInputLocked) return;
   if (currentDrag){
     mouseDragged();
     return false;
@@ -949,6 +984,14 @@ function touchMoved(){
 
 function touchEnded(){
   if (tutorialVisible) return;
+  if (currentState === STATE_PLAY && playInputLocked){
+    if (currentDrag){
+      currentDrag.dragging = false;
+      currentDrag = null;
+    }
+    cursor(ARROW);
+    return;
+  }
   if (currentDrag){
     mouseReleased();
     return false;
@@ -1038,6 +1081,9 @@ function enterStatePlay(){
 }
 function exitStatePlay(){
   timerActive = false;
+  clearHillaryVictoryTimeout();
+  hillaryVictoryPending = false;
+  playInputLocked = false;
 }
 
 function enterStateVictory(){
@@ -1086,6 +1132,13 @@ function clearLeadStartRetry(){
   if (leadStartRetryTimeout){
     clearTimeout(leadStartRetryTimeout);
     leadStartRetryTimeout = null;
+  }
+}
+
+function clearHillaryVictoryTimeout(){
+  if (hillaryVictoryTimeout){
+    clearTimeout(hillaryVictoryTimeout);
+    hillaryVictoryTimeout = null;
   }
 }
 
@@ -1150,6 +1203,9 @@ function startGame(){
 }
 
 function enterVictory(){
+  playInputLocked = false;
+  hillaryVictoryPending = false;
+  clearHillaryVictoryTimeout();
   timerActive = false;
   happyTimer = 0;
   setState(STATE_VICTORY);
