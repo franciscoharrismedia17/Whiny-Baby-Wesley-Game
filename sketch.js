@@ -915,13 +915,21 @@ function mouseReleased(){
   playSound('drop');
   const droppedInside = pointInRect(obj.x, obj.y, getBabyHitbox());
   if (droppedInside){
-    const mood = adjustBabyMood(obj.delta);
-    obj.x = obj.homeX;
-    obj.y = obj.homeY;
-    if (mood < -1){
-      lose();
-    } else if (mood === 1){
+    if (obj.key === 'hillary'){
+      setBabyMood(1);
+      obj.x = obj.homeX;
+      obj.y = obj.homeY;
       score += 1;
+      enterVictory();
+    } else {
+      const mood = adjustBabyMood(obj.delta);
+      obj.x = obj.homeX;
+      obj.y = obj.homeY;
+      if (mood < -1){
+        lose();
+      } else if (mood === 1){
+        score += 1;
+      }
     }
   } else {
     obj.x = obj.homeX;
