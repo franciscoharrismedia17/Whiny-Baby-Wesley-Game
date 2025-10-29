@@ -152,6 +152,7 @@ function setup() {
   imageMode(CENTER);
 
   createLeadUI();
+  createTutorialOverlay();
   positionLeadUI();
   setupLeadMobileBehaviour();
 
@@ -357,6 +358,7 @@ function beginAssetLoading(){
     if (uiFont){
       CONFIG.fonts.uiFamily = uiFont;
       textFont(uiFont);
+      updateTutorialOverlayFont();
     }
     setupObjects();
     resetGame();
@@ -1039,11 +1041,18 @@ function startGame(){
   }
   startRequested = false;
   loadingMessageVisible = false;
-  resetGame();
-  timerActive = true;
-  setState(STATE_PLAY);
   pendingLeadStart = false;
   clearLeadStartRetry();
+  resetGame();
+  setState(STATE_PLAY);
+  const showingTutorial = showTutorialOverlay({
+    onDismiss: () => {
+      timerActive = true;
+    }
+  });
+  if (showingTutorial){
+    timerActive = false;
+  }
   return true;
 }
 
@@ -1074,6 +1083,7 @@ const LEAD_STORAGE_KEY = 'wbw_lead_data_v1';
 const LEAD_SUBMITTED_KEY = 'wbw_lead_submitted_v1';
 const LEAD_QUEUE_KEY = 'wbw_lead_queue_v1';
 const LEAD_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxDzVhcizXvcVpe3iYHhT_w64gRG6EUVGscVmxWj9vkpZzg2yu4ZRGayMf56EEN68pl/exec';
+const TUTORIAL_SHOWN_KEY = 'tutorialShown_v1';
 let leadOverlay = null;
 let leadForm = null;
 let leadError = null;
@@ -1081,6 +1091,11 @@ let leadSuccess = null;
 let leadSubmitButton = null;
 let leadSubmitImage = null;
 let leadPending = false;
+let tutorialOverlay = null;
+let tutorialText = null;
+let tutorialVisible = false;
+let tutorialDismissCallback = null;
+let tutorialSeen = false;
 
 function createLeadUI(){
   const app = document.getElementById('app');
@@ -1161,18 +1176,132 @@ function createLeadUI(){
 }
 
 function positionLeadUI(){
-  if (!leadOverlay) return;
   const rect = canvas?.elt?.getBoundingClientRect();
   if (!rect) return;
-  leadOverlay.style.left = '0px';
-  leadOverlay.style.top = '0px';
-  leadOverlay.style.width = `${rect.width}px`;
-  leadOverlay.style.height = `${rect.height}px`;
+  if (leadOverlay){
+    leadOverlay.style.left = '0px';
+    leadOverlay.style.top = '0px';
+    leadOverlay.style.width = `${rect.width}px`;
+    leadOverlay.style.height = `${rect.height}px`;
+  }
+  applyTutorialOverlaySizing(rect);
 }
 
 function setupLeadMobileBehaviour(){
   if (!leadOverlay) return;
   leadOverlay.addEventListener('touchstart', () => {}, { passive: true });
+}
+
+function hasSeenTutorial(){
+  if (tutorialSeen) return true;
+  try {
+    tutorialSeen = localStorage.getItem(TUTORIAL_SHOWN_KEY) === '1';
+  } catch (e) {
+    /* no-op */
+  }
+  return tutorialSeen;
+}
+
+function markTutorialSeen(){
+  tutorialSeen = true;
+  try {
+    localStorage.setItem(TUTORIAL_SHOWN_KEY, '1');
+  } catch (e) {
+    /* no-op */
+  }
+}
+
+function createTutorialOverlay(){
+  const app = document.getElementById('app');
+  if (!app || tutorialOverlay) return;
+  tutorialOverlay = document.createElement('div');
+  tutorialOverlay.className = 'tutorial-overlay';
+  const style = tutorialOverlay.style;
+  style.position = 'absolute';
+  style.left = '0px';
+  style.top = '0px';
+  style.display = 'none';
+  style.opacity = '0';
+  style.alignItems = 'center';
+  style.justifyContent = 'center';
+  style.background = 'rgba(0, 0, 0, 0.7)';
+  style.color = '#fff';
+  style.pointerEvents = 'none';
+  style.padding = '48px';
+  style.boxSizing = 'border-box';
+  style.textAlign = 'center';
+  style.whiteSpace = 'pre-line';
+  style.zIndex = '30';
+  style.fontFamily = CONFIG.fonts.uiFamily || 'sans-serif';
+
+  tutorialText = document.createElement('div');
+  tutorialText.className = 'tutorial-overlay-text';
+  tutorialText.textContent = 'Help Whiny Baby Wesley Hunt!\nDrag and drop the right item to help him fall asleep.';
+  const textStyle = tutorialText.style;
+  textStyle.margin = '0 auto';
+  textStyle.maxWidth = '80%';
+  textStyle.lineHeight = '1.4';
+  textStyle.whiteSpace = 'pre-line';
+
+  tutorialOverlay.appendChild(tutorialText);
+
+  const dismiss = (event) => {
+    if (event){
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      if (typeof event.stopPropagation === 'function') event.stopPropagation();
+    }
+    hideTutorialOverlay();
+  };
+
+  tutorialOverlay.addEventListener('pointerdown', dismiss, { passive: false });
+  tutorialOverlay.addEventListener('click', dismiss);
+
+  app.appendChild(tutorialOverlay);
+}
+
+function updateTutorialOverlayFont(){
+  if (!tutorialOverlay) return;
+  tutorialOverlay.style.fontFamily = CONFIG.fonts.uiFamily || 'sans-serif';
+}
+
+function applyTutorialOverlaySizing(rect){
+  if (!tutorialOverlay || !rect) return;
+  tutorialOverlay.style.left = '0px';
+  tutorialOverlay.style.top = '0px';
+  tutorialOverlay.style.width = `${rect.width}px`;
+  tutorialOverlay.style.height = `${rect.height}px`;
+  const fontSize = Math.max(20, Math.min(44, rect.width * 0.045));
+  tutorialOverlay.style.fontSize = `${fontSize}px`;
+}
+
+function showTutorialOverlay(options = {}){
+  if (!tutorialOverlay){
+    createTutorialOverlay();
+  }
+  if (!tutorialOverlay || tutorialVisible || hasSeenTutorial()) return false;
+  const { onDismiss } = options;
+  tutorialVisible = true;
+  tutorialDismissCallback = typeof onDismiss === 'function' ? onDismiss : null;
+  tutorialOverlay.style.display = 'flex';
+  tutorialOverlay.style.opacity = '1';
+  tutorialOverlay.style.pointerEvents = 'auto';
+  updateTutorialOverlayFont();
+  positionLeadUI();
+  return true;
+}
+
+function hideTutorialOverlay(){
+  if (!tutorialVisible || !tutorialOverlay) return;
+  tutorialOverlay.style.opacity = '0';
+  tutorialOverlay.style.pointerEvents = 'none';
+  tutorialOverlay.style.display = 'none';
+  tutorialVisible = false;
+  markTutorialSeen();
+  const cb = tutorialDismissCallback;
+  tutorialDismissCallback = null;
+  if (typeof cb === 'function'){
+    cb();
+  }
 }
 
 function enterLeadDesktop(){
