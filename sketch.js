@@ -1131,15 +1131,15 @@ function onLeadSubmit(event){
   const lastName = (formData.get('lastName') || '').toString().trim();
   const email = (formData.get('email') || '').toString().trim();
   if (!firstName || !lastName || !email){
-    leadError.textContent = 'Completá todos los campos.';
+    leadError.textContent = 'Please fill in all fields.';
     return;
   }
   if (!validateEmail(email)){
-    leadError.textContent = 'Ingresá un email válido.';
+    leadError.textContent = 'Please enter a valid email address.';
     return;
   }
   leadError.textContent = '';
-  leadSuccess.textContent = 'Enviando...';
+  leadSuccess.textContent = 'Sending...';
   leadPending = true;
   leadSubmitButton.disabled = true;
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'true';
@@ -1158,29 +1158,18 @@ function onLeadSubmit(event){
     .then(() => {
       try {
         localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
-      } catch (e) {
-        /* no-op */
-      }
-      try {
         localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
-      } catch (e) {
-        /* no-op */
-      }
-      exitLeadDesktopAndStartGame();
+      } catch (e) { /* no-op */ }
+
+      leadSuccess.textContent = 'Sent successfully!';
+      setTimeout(exitLeadDesktopAndStartGame, 500);
     })
-    .catch(() => {
-      enqueuePendingLead(payload);
-      try {
-        localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
-      } catch (e) {
-        /* no-op */
-      }
-      try {
-        localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
-      } catch (e) {
-        /* no-op */
-      }
-      exitLeadDesktopAndStartGame();
+    .catch((err) => {
+      console.error('Lead error:', err);
+      leadError.textContent = 'Error sending data. Please try again.';
+      leadPending = false;
+      leadSubmitButton.disabled = false;
+      if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
     });
 }
 
