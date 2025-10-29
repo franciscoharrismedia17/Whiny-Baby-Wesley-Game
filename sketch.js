@@ -211,6 +211,7 @@ function enterState(state){
 let imgBackground, imgCover2, imgStartButton, imgVictory, imgAgainButton;
 let imgBabyCry, imgBabyNormal, imgBabyHappy;
 let imgOil, imgMaga, imgHillary;
+let imgOilNo, imgMagaNo;
 let imgRestartButton;
 let imgFormHeadline, imgSubmitBtn;
 let uiFont;
@@ -238,9 +239,11 @@ let shakeDuration = 0;
 let happyTimer = 0;
 const HAPPY_HOLD_MS = 1200;
 const HILLARY_VICTORY_DELAY_MS = 1700;
+const DROP_OVERLAY_DURATION_MS = 900;
 let hillaryVictoryPending = false;
 let hillaryVictoryTimeout = null;
 let playInputLocked = false;
+let dropOverlays = [];
 
 // UI button rectangles
 let startButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 500, h: 200 };
@@ -336,6 +339,8 @@ function beginAssetLoading(){
     loadImageAsync('assets/OIL.png', img => imgOil = img),
     loadImageAsync('assets/MAGA.png', img => imgMaga = img),
     loadImageAsync('assets/HILLARY.png', img => imgHillary = img),
+    loadImageAsync('assets/MAGA_NO.png', img => imgMagaNo = img),
+    loadImageAsync('assets/OIL_NO.png', img => imgOilNo = img),
     loadImageAsync('assets/AGAIN_BUTTON.png', img => imgAgainButton = img),
     loadImageAsync('assets/RESTART_BUTTON.png', img => imgRestartButton = img),
     loadImageAsync('assets/FORM.png', img => imgFormHeadline = img),
@@ -430,6 +435,7 @@ function resetGame(){
   clearHillaryVictoryTimeout();
   hillaryVictoryPending = false;
   playInputLocked = false;
+  dropOverlays = [];
   interactables.forEach(obj => {
     obj.x = obj.homeX;
     obj.y = obj.homeY;
@@ -468,6 +474,7 @@ function draw(){
       break;
   }
   pop();
+  drawDropOverlays();
   if (tutorialVisible){
     drawTutorialOverlayGraphics();
   }
@@ -775,6 +782,40 @@ function drawInteractables(){
   }
 }
 
+function drawDropOverlays(){
+  if (!dropOverlays.length) return;
+  const dt = (typeof deltaTime === 'number' && !Number.isNaN(deltaTime)) ? deltaTime : 16.6667;
+  for (let i = dropOverlays.length - 1; i >= 0; i--){
+    const overlay = dropOverlays[i];
+    overlay.elapsed += dt;
+    const progress = overlay.elapsed / DROP_OVERLAY_DURATION_MS;
+    const alpha = 1 - constrain(progress, 0, 1);
+    if (alpha <= 0){
+      dropOverlays.splice(i, 1);
+      continue;
+    }
+    push();
+    imageMode(CENTER);
+    tint(255, 255 * alpha);
+    image(overlay.img, overlay.x, overlay.y, overlay.w, overlay.h);
+    pop();
+  }
+}
+
+function spawnDropOverlay(img, x, y, w, h){
+  if (!img) return;
+  const width = (typeof w === 'number' && !Number.isNaN(w)) ? w : (img.width || 0);
+  const height = (typeof h === 'number' && !Number.isNaN(h)) ? h : (img.height || 0);
+  dropOverlays.push({
+    img,
+    x,
+    y,
+    w: width,
+    h: height,
+    elapsed: 0
+  });
+}
+
 function drawBedtimeTimer(){
   push();
   const font = CONFIG.fonts.uiFamily || 'sans-serif';
@@ -936,6 +977,10 @@ function mouseReleased(){
   obj.dragging = false;
   cursor(ARROW);
   playSound('drop');
+  const dropX = obj.x;
+  const dropY = obj.y;
+  const dropW = obj.w;
+  const dropH = obj.h;
   const droppedInside = pointInRect(obj.x, obj.y, getBabyHitbox());
   if (droppedInside){
     if (obj.key === 'hillary'){
@@ -956,6 +1001,11 @@ function mouseReleased(){
         }, HILLARY_VICTORY_DELAY_MS);
       }
     } else {
+      if (obj.key === 'maga'){
+        spawnDropOverlay(imgMagaNo, dropX, dropY, dropW, dropH);
+      } else if (obj.key === 'oil'){
+        spawnDropOverlay(imgOilNo, dropX, dropY, dropW, dropH);
+      }
       const mood = adjustBabyMood(obj.delta);
       obj.x = obj.homeX;
       obj.y = obj.homeY;
