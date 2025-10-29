@@ -936,8 +936,9 @@ function enterStateLead(){
 function exitStateLead(){}
 
 function startPlayFlow(){
-  startGame();
-  if (currentState === STATE_LEAD){
+  const wasLead = currentState === STATE_LEAD;
+  const started = startGame();
+  if (wasLead && !started){
     setState(STATE_MENU);
   }
 }
@@ -945,16 +946,17 @@ function startPlayFlow(){
 function startGame(){
   stopSound('victory');
   if (!assetsLoaded){
-    beginAssetLoading();
     startRequested = true;
+    beginAssetLoading();
     loadingMessageVisible = true;
-    return;
+    return false;
   }
   startRequested = false;
   loadingMessageVisible = false;
   resetGame();
   timerActive = true;
   setState(STATE_PLAY);
+  return true;
 }
 
 function enterVictory(){
