@@ -219,6 +219,9 @@ let assetsLoaded = false;
 let assetsLoading = false;
 let startRequested = false;
 let loadingMessageVisible = false;
+let pendingLeadStart = false;
+let leadStartRetryTimeout = null;
+let lastPointerPressFrame = -1;
 let loseVideoActive = false;
 
 // Game objects
@@ -282,10 +285,25 @@ function loadVideoAsync(path){
       resolve();
       return;
     }
-    loseVideo = createVideo(path, () => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
       resolve();
-    });
+    };
+    loseVideo = createVideo(path, finish);
     configureLoseVideo();
+    if (loseVideo && loseVideo.elt){
+      const videoEl = loseVideo.elt;
+      const onReady = () => finish();
+      const onError = () => finish();
+      videoEl.addEventListener('loadeddata', onReady, { once: true });
+      videoEl.addEventListener('canplay', onReady, { once: true });
+      videoEl.addEventListener('canplaythrough', onReady, { once: true });
+      videoEl.addEventListener('error', onError, { once: true });
+      videoEl.addEventListener('stalled', onError, { once: true });
+    }
+    setTimeout(finish, 4000);
   });
 }
 
@@ -729,50 +747,70 @@ function updateTimer(){
   }
 }
 
-function mousePressed(){
+function handlePointerPress(x, y){
+  if (lastPointerPressFrame === frameCount) return false;
+  lastPointerPressFrame = frameCount;
   ensureAudioContext();
   if (currentState === STATE_MENU){
-    if (pointInRect(mouseX, mouseY, startButtonRect)){
+    if (pointInRect(x, y, startButtonRect)){
       playSound('button');
       beginAssetLoading();
       if (!leadAlreadyShownThisSession() && shouldShowLeadDesktop()){
         markLeadShownThisSession();
         enterLeadDesktop();
       } else {
-        startPlayFlow();
+        startPlayFlow({ fromLead: pendingLeadStart });
       }
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_VICTORY){
-    if (pointInRect(mouseX, mouseY, victoryButtonRect)){
+    if (pointInRect(x, y, victoryButtonRect)){
       playSound('button');
       resetGame();
       startRequested = true;
       startGame();
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_LOSE){
-    if (pointInRect(mouseX, mouseY, loseButtonRect)){
+    if (pointInRect(x, y, loseButtonRect)){
       playSound('button');
       resetGame();
       startRequested = true;
       startGame();
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_PLAY){
     for (const obj of interactables){
-      if (over(obj, mouseX, mouseY)){
+      if (over(obj, x, y)){
         currentDrag = obj;
         obj.dragging = true;
         obj.hover = true;
         noCursor();
         playSound('grab');
-        break;
+        return true;
       }
     }
+  }
+  return false;
+}
+
+function mousePressed(){
+  handlePointerPress(mouseX, mouseY);
+}
+
+function touchStarted(){
+  const touch = touches && touches.length ? touches[0] : null;
+  const x = touch ? touch.x : mouseX;
+  const y = touch ? touch.y : mouseY;
+  const handled = handlePointerPress(x, y);
+  if (handled){
+    return false;
   }
 }
 
@@ -806,6 +844,20 @@ function mouseReleased(){
     triggerShake();
   }
   currentDrag = null;
+}
+
+function touchMoved(){
+  if (currentDrag){
+    mouseDragged();
+    return false;
+  }
+}
+
+function touchEnded(){
+  if (currentDrag){
+    mouseReleased();
+    return false;
+  }
 }
 
 function adjustBabyMood(delta){
@@ -935,26 +987,64 @@ function enterStateLead(){
 }
 function exitStateLead(){}
 
-function startPlayFlow(){
-  startGame();
-  if (currentState === STATE_LEAD){
-    setState(STATE_MENU);
+function clearLeadStartRetry(){
+  if (leadStartRetryTimeout){
+    clearTimeout(leadStartRetryTimeout);
+    leadStartRetryTimeout = null;
+  }
+}
+
+function scheduleLeadStartRetry(){
+  if (leadStartRetryTimeout || !pendingLeadStart) return;
+  leadStartRetryTimeout = setTimeout(() => {
+    leadStartRetryTimeout = null;
+    if (!pendingLeadStart) return;
+    const started = startGame();
+    if (started){
+      pendingLeadStart = false;
+      clearLeadStartRetry();
+    } else {
+      scheduleLeadStartRetry();
+    }
+  }, 350);
+}
+
+function startPlayFlow(options = {}){
+  const { fromLead = false } = options;
+  const leadFlowActive = fromLead || pendingLeadStart;
+  const started = startGame();
+  if (started){
+    pendingLeadStart = false;
+    clearLeadStartRetry();
+    return;
+  }
+  if (leadFlowActive){
+    pendingLeadStart = true;
+    if (currentState !== STATE_MENU){
+      setState(STATE_MENU);
+    }
+    loadingMessageVisible = assetsLoading;
+    clearLeadStartRetry();
+    scheduleLeadStartRetry();
   }
 }
 
 function startGame(){
   stopSound('victory');
   if (!assetsLoaded){
-    beginAssetLoading();
     startRequested = true;
+    beginAssetLoading();
     loadingMessageVisible = true;
-    return;
+    return false;
   }
   startRequested = false;
   loadingMessageVisible = false;
   resetGame();
   timerActive = true;
   setState(STATE_PLAY);
+  pendingLeadStart = false;
+  clearLeadStartRetry();
+  return true;
 }
 
 function enterVictory(){
@@ -1087,6 +1177,8 @@ function setupLeadMobileBehaviour(){
 
 function enterLeadDesktop(){
   setState(STATE_LEAD);
+  pendingLeadStart = false;
+  clearLeadStartRetry();
   if (leadOverlay){
     leadOverlay.style.display = 'flex';
     positionLeadUI();
@@ -1118,7 +1210,7 @@ function exitLeadDesktopAndStartGame(){
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
   if (leadError) leadError.textContent = '';
   if (leadSuccess) leadSuccess.textContent = '';
-  startPlayFlow();
+  startPlayFlow({ fromLead: true });
 }
 
 function onLeadSubmit(event){
@@ -1131,15 +1223,15 @@ function onLeadSubmit(event){
   const lastName = (formData.get('lastName') || '').toString().trim();
   const email = (formData.get('email') || '').toString().trim();
   if (!firstName || !lastName || !email){
-    leadError.textContent = 'Completá todos los campos.';
+    leadError.textContent = 'Please fill in all fields.';
     return;
   }
   if (!validateEmail(email)){
-    leadError.textContent = 'Ingresá un email válido.';
+    leadError.textContent = 'Please enter a valid email address.';
     return;
   }
   leadError.textContent = '';
-  leadSuccess.textContent = 'Enviando...';
+  leadSuccess.textContent = 'Sending...';
   leadPending = true;
   leadSubmitButton.disabled = true;
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'true';
@@ -1158,29 +1250,18 @@ function onLeadSubmit(event){
     .then(() => {
       try {
         localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
-      } catch (e) {
-        /* no-op */
-      }
-      try {
         localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
-      } catch (e) {
-        /* no-op */
-      }
-      exitLeadDesktopAndStartGame();
+      } catch (e) { /* no-op */ }
+
+      leadSuccess.textContent = 'Sent successfully!';
+      setTimeout(exitLeadDesktopAndStartGame, 500);
     })
-    .catch(() => {
-      enqueuePendingLead(payload);
-      try {
-        localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
-      } catch (e) {
-        /* no-op */
-      }
-      try {
-        localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
-      } catch (e) {
-        /* no-op */
-      }
-      exitLeadDesktopAndStartGame();
+    .catch((err) => {
+      console.error('Lead error:', err);
+      leadError.textContent = 'Error sending data. Please try again.';
+      leadPending = false;
+      leadSubmitButton.disabled = false;
+      if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
     });
 }
 
