@@ -219,6 +219,9 @@ let assetsLoaded = false;
 let assetsLoading = false;
 let startRequested = false;
 let loadingMessageVisible = false;
+let pendingLeadStart = false;
+let leadStartRetryTimeout = null;
+let lastPointerPressFrame = -1;
 let loseVideoActive = false;
 
 // Game objects
@@ -729,10 +732,12 @@ function updateTimer(){
   }
 }
 
-function mousePressed(){
+function handlePointerPress(x, y){
+  if (lastPointerPressFrame === frameCount) return false;
+  lastPointerPressFrame = frameCount;
   ensureAudioContext();
   if (currentState === STATE_MENU){
-    if (pointInRect(mouseX, mouseY, startButtonRect)){
+    if (pointInRect(x, y, startButtonRect)){
       playSound('button');
       beginAssetLoading();
       if (!leadAlreadyShownThisSession() && shouldShowLeadDesktop()){
@@ -741,38 +746,56 @@ function mousePressed(){
       } else {
         startPlayFlow();
       }
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_VICTORY){
-    if (pointInRect(mouseX, mouseY, victoryButtonRect)){
+    if (pointInRect(x, y, victoryButtonRect)){
       playSound('button');
       resetGame();
       startRequested = true;
       startGame();
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_LOSE){
-    if (pointInRect(mouseX, mouseY, loseButtonRect)){
+    if (pointInRect(x, y, loseButtonRect)){
       playSound('button');
       resetGame();
       startRequested = true;
       startGame();
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_PLAY){
     for (const obj of interactables){
-      if (over(obj, mouseX, mouseY)){
+      if (over(obj, x, y)){
         currentDrag = obj;
         obj.dragging = true;
         obj.hover = true;
         noCursor();
         playSound('grab');
-        break;
+        return true;
       }
     }
+  }
+  return false;
+}
+
+function mousePressed(){
+  handlePointerPress(mouseX, mouseY);
+}
+
+function touchStarted(){
+  const touch = touches && touches.length ? touches[0] : null;
+  const x = touch ? touch.x : mouseX;
+  const y = touch ? touch.y : mouseY;
+  const handled = handlePointerPress(x, y);
+  if (handled){
+    return false;
   }
 }
 
@@ -806,6 +829,20 @@ function mouseReleased(){
     triggerShake();
   }
   currentDrag = null;
+}
+
+function touchMoved(){
+  if (currentDrag){
+    mouseDragged();
+    return false;
+  }
+}
+
+function touchEnded(){
+  if (currentDrag){
+    mouseReleased();
+    return false;
+  }
 }
 
 function adjustBabyMood(delta){
@@ -935,11 +972,42 @@ function enterStateLead(){
 }
 function exitStateLead(){}
 
-function startPlayFlow(){
-  const wasLead = currentState === STATE_LEAD;
+function clearLeadStartRetry(){
+  if (leadStartRetryTimeout){
+    clearTimeout(leadStartRetryTimeout);
+    leadStartRetryTimeout = null;
+  }
+}
+
+function scheduleLeadStartRetry(){
+  if (leadStartRetryTimeout || !pendingLeadStart) return;
+  leadStartRetryTimeout = setTimeout(() => {
+    leadStartRetryTimeout = null;
+    if (!pendingLeadStart) return;
+    const started = startGame();
+    if (started){
+      pendingLeadStart = false;
+      clearLeadStartRetry();
+    } else {
+      scheduleLeadStartRetry();
+    }
+  }, 350);
+}
+
+function startPlayFlow(options = {}){
+  const { fromLead = false } = options;
   const started = startGame();
-  if (wasLead && !started){
-    setState(STATE_MENU);
+  if (started){
+    pendingLeadStart = false;
+    clearLeadStartRetry();
+    return;
+  }
+  if (fromLead){
+    pendingLeadStart = true;
+    if (currentState !== STATE_MENU){
+      setState(STATE_MENU);
+    }
+    scheduleLeadStartRetry();
   }
 }
 
@@ -956,6 +1024,8 @@ function startGame(){
   resetGame();
   timerActive = true;
   setState(STATE_PLAY);
+  pendingLeadStart = false;
+  clearLeadStartRetry();
   return true;
 }
 
@@ -1089,6 +1159,8 @@ function setupLeadMobileBehaviour(){
 
 function enterLeadDesktop(){
   setState(STATE_LEAD);
+  pendingLeadStart = false;
+  clearLeadStartRetry();
   if (leadOverlay){
     leadOverlay.style.display = 'flex';
     positionLeadUI();
@@ -1120,7 +1192,7 @@ function exitLeadDesktopAndStartGame(){
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
   if (leadError) leadError.textContent = '';
   if (leadSuccess) leadSuccess.textContent = '';
-  startPlayFlow();
+  startPlayFlow({ fromLead: true });
 }
 
 function onLeadSubmit(event){
