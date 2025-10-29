@@ -152,6 +152,7 @@ function setup() {
   imageMode(CENTER);
 
   createLeadUI();
+  createTutorialOverlay();
   positionLeadUI();
   setupLeadMobileBehaviour();
 
@@ -219,6 +220,9 @@ let assetsLoaded = false;
 let assetsLoading = false;
 let startRequested = false;
 let loadingMessageVisible = false;
+let pendingLeadStart = false;
+let leadStartRetryTimeout = null;
+let lastPointerPressFrame = -1;
 let loseVideoActive = false;
 
 // Game objects
@@ -233,6 +237,10 @@ let shakeIntensity = 0;
 let shakeDuration = 0;
 let happyTimer = 0;
 const HAPPY_HOLD_MS = 1200;
+const HILLARY_VICTORY_DELAY_MS = 1700;
+let hillaryVictoryPending = false;
+let hillaryVictoryTimeout = null;
+let playInputLocked = false;
 
 // UI button rectangles
 let startButtonRect = { x: WIDTH/2, y: HEIGHT - 420, w: 500, h: 200 };
@@ -282,10 +290,25 @@ function loadVideoAsync(path){
       resolve();
       return;
     }
-    loseVideo = createVideo(path, () => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
       resolve();
-    });
+    };
+    loseVideo = createVideo(path, finish);
     configureLoseVideo();
+    if (loseVideo && loseVideo.elt){
+      const videoEl = loseVideo.elt;
+      const onReady = () => finish();
+      const onError = () => finish();
+      videoEl.addEventListener('loadeddata', onReady, { once: true });
+      videoEl.addEventListener('canplay', onReady, { once: true });
+      videoEl.addEventListener('canplaythrough', onReady, { once: true });
+      videoEl.addEventListener('error', onError, { once: true });
+      videoEl.addEventListener('stalled', onError, { once: true });
+    }
+    setTimeout(finish, 4000);
   });
 }
 
@@ -339,6 +362,7 @@ function beginAssetLoading(){
     if (uiFont){
       CONFIG.fonts.uiFamily = uiFont;
       textFont(uiFont);
+      updateTutorialOverlayFont();
     }
     setupObjects();
     resetGame();
@@ -403,6 +427,9 @@ function resetGame(){
   loseVideoActive = false;
   currentDrag = null;
   happyTimer = 0;
+  clearHillaryVictoryTimeout();
+  hillaryVictoryPending = false;
+  playInputLocked = false;
   interactables.forEach(obj => {
     obj.x = obj.homeX;
     obj.y = obj.homeY;
@@ -440,6 +467,83 @@ function draw(){
       drawLeadPause();
       break;
   }
+  pop();
+  if (tutorialVisible){
+    drawTutorialOverlayGraphics();
+  }
+}
+
+function drawTutorialOverlayGraphics(){
+  push();
+  resetMatrix();
+  rectMode(CORNER);
+  noStroke();
+  fill(0, 0, 0, 180);
+  rect(0, 0, WIDTH, HEIGHT);
+
+  const uiFont = 'Helvetica, Arial, sans-serif';
+  const baseFontSize = 64;
+  const fontScale = WIDTH / 1080;
+  const fontSize = baseFontSize * fontScale;
+  textAlign(CENTER, CENTER);
+  textFont(uiFont);
+  textSize(fontSize);
+  textLeading(fontSize * 1.1);
+  fill(255);
+  drawingContext.shadowColor = 'rgba(0, 0, 0, 0.45)';
+  drawingContext.shadowBlur = 18;
+  const message = 'Help Whiny Baby Wesley Hunt!\nDrag and drop the right item to help him fall asleep.';
+  const textBoxWidth = WIDTH * 0.8;
+  const textBoxHeight = HEIGHT * 0.35;
+  const textBoxX = (WIDTH - textBoxWidth) / 2;
+  const textBoxY = HEIGHT * 0.28;
+  text(message, textBoxX, textBoxY, textBoxWidth, textBoxHeight);
+  drawingContext.shadowBlur = 0;
+  drawingContext.shadowColor = 'transparent';
+
+  const startObj = interactables.length ? interactables[0] : null;
+  const fallbackOrder = CONFIG.items.order || [];
+  const fallbackCenterOffset = (fallbackOrder.length - 1) / 2;
+  const fallbackBaseX = CONFIG.items.baseX ?? WIDTH / 2;
+  const fallbackSpacing = CONFIG.items.spacing ?? 340;
+  const fallbackY = CONFIG.items.y ?? (HEIGHT - 320);
+  const startX = startObj ? startObj.x : fallbackBaseX + (0 - fallbackCenterOffset) * fallbackSpacing;
+  const startY = startObj ? startObj.y : fallbackY;
+  const babyHitbox = getBabyHitbox();
+  const endX = babyHitbox.x;
+  const endY = babyHitbox.y;
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const angle = Math.atan2(dy, dx);
+  const headLength = 120;
+  const dt = (typeof deltaTime === 'number' && !Number.isNaN(deltaTime)) ? deltaTime : 16.6667;
+  tutorialArrowPhase = (tutorialArrowPhase + dt) % 1800;
+  const strokePulse = 8 + 2 * Math.sin((tutorialArrowPhase / 1800) * TWO_PI * 2);
+  const lineEndX = endX - Math.cos(angle) * headLength;
+  const lineEndY = endY - Math.sin(angle) * headLength;
+  const arrowColor = color(255, 244, 252, 220);
+  stroke(arrowColor);
+  strokeWeight(strokePulse);
+  strokeCap(ROUND);
+  strokeJoin(ROUND);
+  line(startX, startY, lineEndX, lineEndY);
+  noStroke();
+  fill(arrowColor);
+  const headWidth = 70;
+  const leftX = endX - Math.cos(angle) * headLength + Math.sin(angle) * headWidth * 0.5;
+  const leftY = endY - Math.sin(angle) * headLength - Math.cos(angle) * headWidth * 0.5;
+  const rightX = endX - Math.cos(angle) * headLength - Math.sin(angle) * headWidth * 0.5;
+  const rightY = endY - Math.sin(angle) * headLength + Math.cos(angle) * headWidth * 0.5;
+  triangle(endX, endY, leftX, leftY, rightX, rightY);
+
+  const travelCycle = 1200;
+  const travelPhase = (tutorialArrowPhase % travelCycle) / travelCycle;
+  const highlightX = lerp(startX, lineEndX, travelPhase);
+  const highlightY = lerp(startY, lineEndY, travelPhase);
+  const dotSize = 34 + 10 * Math.sin((tutorialArrowPhase / travelCycle) * TWO_PI);
+  fill(255, 248, 255, 235);
+  ellipse(highlightX, highlightY, dotSize, dotSize);
+
   pop();
 }
 
@@ -518,9 +622,13 @@ function drawGame(){
   drawBaby();
   drawInteractables();
   if (babyMood === 1){
-    happyTimer += deltaTime;
-    if (happyTimer >= HAPPY_HOLD_MS){
-      enterVictory();
+    if (hillaryVictoryPending){
+      happyTimer = 0;
+    } else {
+      happyTimer += deltaTime;
+      if (happyTimer >= HAPPY_HOLD_MS){
+        enterVictory();
+      }
     }
   } else {
     happyTimer = 0;
@@ -729,54 +837,83 @@ function updateTimer(){
   }
 }
 
-function mousePressed(){
+function handlePointerPress(x, y){
+  if (lastPointerPressFrame === frameCount) return false;
+  lastPointerPressFrame = frameCount;
   ensureAudioContext();
+  if (tutorialVisible){
+    hideTutorialOverlay();
+    return true;
+  }
+  if (currentState === STATE_PLAY && playInputLocked){
+    return true;
+  }
   if (currentState === STATE_MENU){
-    if (pointInRect(mouseX, mouseY, startButtonRect)){
+    if (pointInRect(x, y, startButtonRect)){
       playSound('button');
       beginAssetLoading();
       if (!leadAlreadyShownThisSession() && shouldShowLeadDesktop()){
         markLeadShownThisSession();
         enterLeadDesktop();
       } else {
-        startPlayFlow();
+        startPlayFlow({ fromLead: pendingLeadStart });
       }
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_VICTORY){
-    if (pointInRect(mouseX, mouseY, victoryButtonRect)){
+    if (pointInRect(x, y, victoryButtonRect)){
       playSound('button');
       resetGame();
       startRequested = true;
       startGame();
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_LOSE){
-    if (pointInRect(mouseX, mouseY, loseButtonRect)){
+    if (pointInRect(x, y, loseButtonRect)){
       playSound('button');
       resetGame();
       startRequested = true;
       startGame();
+      return true;
     }
-    return;
+    return false;
   }
   if (currentState === STATE_PLAY){
     for (const obj of interactables){
-      if (over(obj, mouseX, mouseY)){
+      if (over(obj, x, y)){
         currentDrag = obj;
         obj.dragging = true;
         obj.hover = true;
         noCursor();
         playSound('grab');
-        break;
+        return true;
       }
     }
+  }
+  return false;
+}
+
+function mousePressed(){
+  handlePointerPress(mouseX, mouseY);
+}
+
+function touchStarted(){
+  const touch = touches && touches.length ? touches[0] : null;
+  const x = touch ? touch.x : mouseX;
+  const y = touch ? touch.y : mouseY;
+  const handled = handlePointerPress(x, y);
+  if (handled){
+    return false;
   }
 }
 
 function mouseDragged(){
+  if (tutorialVisible) return;
+  if (currentState === STATE_PLAY && playInputLocked) return;
   if (currentDrag){
     currentDrag.x = mouseX;
     currentDrag.y = mouseY;
@@ -785,6 +922,15 @@ function mouseDragged(){
 }
 
 function mouseReleased(){
+  if (tutorialVisible) return;
+  if (currentState === STATE_PLAY && playInputLocked){
+    if (currentDrag){
+      currentDrag.dragging = false;
+      currentDrag = null;
+    }
+    cursor(ARROW);
+    return;
+  }
   if (!currentDrag) return;
   const obj = currentDrag;
   obj.dragging = false;
@@ -792,13 +938,32 @@ function mouseReleased(){
   playSound('drop');
   const droppedInside = pointInRect(obj.x, obj.y, getBabyHitbox());
   if (droppedInside){
-    const mood = adjustBabyMood(obj.delta);
-    obj.x = obj.homeX;
-    obj.y = obj.homeY;
-    if (mood < -1){
-      lose();
-    } else if (mood === 1){
-      score += 1;
+    if (obj.key === 'hillary'){
+      obj.x = obj.homeX;
+      obj.y = obj.homeY;
+      if (!hillaryVictoryPending){
+        setBabyMood(1);
+        score += 1;
+        hillaryVictoryPending = true;
+        playInputLocked = true;
+        timerActive = false;
+        clearHillaryVictoryTimeout();
+        hillaryVictoryTimeout = setTimeout(() => {
+          hillaryVictoryTimeout = null;
+          if (currentState === STATE_PLAY){
+            enterVictory();
+          }
+        }, HILLARY_VICTORY_DELAY_MS);
+      }
+    } else {
+      const mood = adjustBabyMood(obj.delta);
+      obj.x = obj.homeX;
+      obj.y = obj.homeY;
+      if (mood < -1){
+        lose();
+      } else if (mood === 1){
+        score += 1;
+      }
     }
   } else {
     obj.x = obj.homeX;
@@ -806,6 +971,31 @@ function mouseReleased(){
     triggerShake();
   }
   currentDrag = null;
+}
+
+function touchMoved(){
+  if (tutorialVisible) return;
+  if (currentState === STATE_PLAY && playInputLocked) return;
+  if (currentDrag){
+    mouseDragged();
+    return false;
+  }
+}
+
+function touchEnded(){
+  if (tutorialVisible) return;
+  if (currentState === STATE_PLAY && playInputLocked){
+    if (currentDrag){
+      currentDrag.dragging = false;
+      currentDrag = null;
+    }
+    cursor(ARROW);
+    return;
+  }
+  if (currentDrag){
+    mouseReleased();
+    return false;
+  }
 }
 
 function adjustBabyMood(delta){
@@ -891,6 +1081,9 @@ function enterStatePlay(){
 }
 function exitStatePlay(){
   timerActive = false;
+  clearHillaryVictoryTimeout();
+  hillaryVictoryPending = false;
+  playInputLocked = false;
 }
 
 function enterStateVictory(){
@@ -935,29 +1128,84 @@ function enterStateLead(){
 }
 function exitStateLead(){}
 
-function startPlayFlow(){
-  startGame();
-  if (currentState === STATE_LEAD){
-    setState(STATE_MENU);
+function clearLeadStartRetry(){
+  if (leadStartRetryTimeout){
+    clearTimeout(leadStartRetryTimeout);
+    leadStartRetryTimeout = null;
+  }
+}
+
+function clearHillaryVictoryTimeout(){
+  if (hillaryVictoryTimeout){
+    clearTimeout(hillaryVictoryTimeout);
+    hillaryVictoryTimeout = null;
+  }
+}
+
+function scheduleLeadStartRetry(){
+  if (leadStartRetryTimeout || !pendingLeadStart) return;
+  leadStartRetryTimeout = setTimeout(() => {
+    leadStartRetryTimeout = null;
+    if (!pendingLeadStart) return;
+    const started = startGame();
+    if (started){
+      pendingLeadStart = false;
+      clearLeadStartRetry();
+    } else {
+      scheduleLeadStartRetry();
+    }
+  }, 350);
+}
+
+function startPlayFlow(options = {}){
+  const { fromLead = false } = options;
+  const leadFlowActive = fromLead || pendingLeadStart;
+  const started = startGame();
+  if (started){
+    pendingLeadStart = false;
+    clearLeadStartRetry();
+    return;
+  }
+  if (leadFlowActive){
+    pendingLeadStart = true;
+    if (currentState !== STATE_MENU){
+      setState(STATE_MENU);
+    }
+    loadingMessageVisible = assetsLoading;
+    clearLeadStartRetry();
+    scheduleLeadStartRetry();
   }
 }
 
 function startGame(){
   stopSound('victory');
   if (!assetsLoaded){
-    beginAssetLoading();
     startRequested = true;
+    beginAssetLoading();
     loadingMessageVisible = true;
-    return;
+    return false;
   }
   startRequested = false;
   loadingMessageVisible = false;
+  pendingLeadStart = false;
+  clearLeadStartRetry();
   resetGame();
-  timerActive = true;
   setState(STATE_PLAY);
+  const showingTutorial = showTutorialOverlay({
+    onDismiss: () => {
+      timerActive = true;
+    }
+  });
+  if (showingTutorial){
+    timerActive = false;
+  }
+  return true;
 }
 
 function enterVictory(){
+  playInputLocked = false;
+  hillaryVictoryPending = false;
+  clearHillaryVictoryTimeout();
   timerActive = false;
   happyTimer = 0;
   setState(STATE_VICTORY);
@@ -984,6 +1232,7 @@ const LEAD_STORAGE_KEY = 'wbw_lead_data_v1';
 const LEAD_SUBMITTED_KEY = 'wbw_lead_submitted_v1';
 const LEAD_QUEUE_KEY = 'wbw_lead_queue_v1';
 const LEAD_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxDzVhcizXvcVpe3iYHhT_w64gRG6EUVGscVmxWj9vkpZzg2yu4ZRGayMf56EEN68pl/exec';
+const TUTORIAL_SHOWN_KEY = 'tutorialShown_v3';
 let leadOverlay = null;
 let leadForm = null;
 let leadError = null;
@@ -991,6 +1240,11 @@ let leadSuccess = null;
 let leadSubmitButton = null;
 let leadSubmitImage = null;
 let leadPending = false;
+let tutorialOverlay = null;
+let tutorialVisible = false;
+let tutorialDismissCallback = null;
+let tutorialSeen = false;
+let tutorialArrowPhase = 0;
 
 function createLeadUI(){
   const app = document.getElementById('app');
@@ -1071,13 +1325,15 @@ function createLeadUI(){
 }
 
 function positionLeadUI(){
-  if (!leadOverlay) return;
   const rect = canvas?.elt?.getBoundingClientRect();
   if (!rect) return;
-  leadOverlay.style.left = '0px';
-  leadOverlay.style.top = '0px';
-  leadOverlay.style.width = `${rect.width}px`;
-  leadOverlay.style.height = `${rect.height}px`;
+  if (leadOverlay){
+    leadOverlay.style.left = '0px';
+    leadOverlay.style.top = '0px';
+    leadOverlay.style.width = `${rect.width}px`;
+    leadOverlay.style.height = `${rect.height}px`;
+  }
+  applyTutorialOverlaySizing(rect);
 }
 
 function setupLeadMobileBehaviour(){
@@ -1085,8 +1341,105 @@ function setupLeadMobileBehaviour(){
   leadOverlay.addEventListener('touchstart', () => {}, { passive: true });
 }
 
+function hasSeenTutorial(){
+  if (tutorialSeen) return true;
+  try {
+    tutorialSeen = localStorage.getItem(TUTORIAL_SHOWN_KEY) === '1';
+  } catch (e) {
+    /* no-op */
+  }
+  return tutorialSeen;
+}
+
+function markTutorialSeen(){
+  tutorialSeen = true;
+  try {
+    localStorage.setItem(TUTORIAL_SHOWN_KEY, '1');
+  } catch (e) {
+    /* no-op */
+  }
+}
+
+function createTutorialOverlay(){
+  const app = document.getElementById('app');
+  if (!app || tutorialOverlay) return;
+  tutorialOverlay = document.createElement('div');
+  tutorialOverlay.className = 'tutorial-overlay';
+  const style = tutorialOverlay.style;
+  style.position = 'absolute';
+  style.left = '0px';
+  style.top = '0px';
+  style.display = 'none';
+  style.opacity = '0';
+  style.background = 'rgba(0, 0, 0, 0)';
+  style.pointerEvents = 'none';
+  style.boxSizing = 'border-box';
+  style.zIndex = '30';
+  style.cursor = 'pointer';
+  style.transition = 'opacity 0.2s ease-out';
+
+  const dismiss = (event) => {
+    if (event){
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      if (typeof event.stopPropagation === 'function') event.stopPropagation();
+    }
+    hideTutorialOverlay();
+  };
+
+  tutorialOverlay.addEventListener('pointerdown', dismiss, { passive: false });
+  tutorialOverlay.addEventListener('click', dismiss);
+
+  app.appendChild(tutorialOverlay);
+}
+
+function updateTutorialOverlayFont(){
+  if (!tutorialOverlay) return;
+  tutorialOverlay.style.fontFamily = 'Helvetica, Arial, sans-serif';
+}
+
+function applyTutorialOverlaySizing(rect){
+  if (!tutorialOverlay || !rect) return;
+  tutorialOverlay.style.left = '0px';
+  tutorialOverlay.style.top = '0px';
+  tutorialOverlay.style.width = `${rect.width}px`;
+  tutorialOverlay.style.height = `${rect.height}px`;
+}
+
+function showTutorialOverlay(options = {}){
+  if (!tutorialOverlay){
+    createTutorialOverlay();
+  }
+  if (!tutorialOverlay || tutorialVisible || hasSeenTutorial()) return false;
+  const { onDismiss } = options;
+  tutorialVisible = true;
+  tutorialDismissCallback = typeof onDismiss === 'function' ? onDismiss : null;
+  tutorialOverlay.style.display = 'block';
+  tutorialOverlay.style.opacity = '1';
+  tutorialOverlay.style.pointerEvents = 'auto';
+  updateTutorialOverlayFont();
+  positionLeadUI();
+  tutorialArrowPhase = 0;
+  return true;
+}
+
+function hideTutorialOverlay(){
+  if (!tutorialVisible || !tutorialOverlay) return;
+  tutorialOverlay.style.opacity = '0';
+  tutorialOverlay.style.pointerEvents = 'none';
+  tutorialOverlay.style.display = 'none';
+  tutorialVisible = false;
+  markTutorialSeen();
+  const cb = tutorialDismissCallback;
+  tutorialDismissCallback = null;
+  if (typeof cb === 'function'){
+    cb();
+  }
+}
+
 function enterLeadDesktop(){
   setState(STATE_LEAD);
+  pendingLeadStart = false;
+  clearLeadStartRetry();
   if (leadOverlay){
     leadOverlay.style.display = 'flex';
     positionLeadUI();
@@ -1118,7 +1471,7 @@ function exitLeadDesktopAndStartGame(){
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
   if (leadError) leadError.textContent = '';
   if (leadSuccess) leadSuccess.textContent = '';
-  startPlayFlow();
+  startPlayFlow({ fromLead: true });
 }
 
 function onLeadSubmit(event){
@@ -1131,15 +1484,15 @@ function onLeadSubmit(event){
   const lastName = (formData.get('lastName') || '').toString().trim();
   const email = (formData.get('email') || '').toString().trim();
   if (!firstName || !lastName || !email){
-    leadError.textContent = 'Completá todos los campos.';
+    leadError.textContent = 'Please fill in all fields.';
     return;
   }
   if (!validateEmail(email)){
-    leadError.textContent = 'Ingresá un email válido.';
+    leadError.textContent = 'Please enter a valid email address.';
     return;
   }
   leadError.textContent = '';
-  leadSuccess.textContent = 'Enviando...';
+  leadSuccess.textContent = 'Sending...';
   leadPending = true;
   leadSubmitButton.disabled = true;
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'true';
@@ -1158,29 +1511,18 @@ function onLeadSubmit(event){
     .then(() => {
       try {
         localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
-      } catch (e) {
-        /* no-op */
-      }
-      try {
         localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
-      } catch (e) {
-        /* no-op */
-      }
-      exitLeadDesktopAndStartGame();
+      } catch (e) { /* no-op */ }
+
+      leadSuccess.textContent = 'Sent successfully!';
+      setTimeout(exitLeadDesktopAndStartGame, 500);
     })
-    .catch(() => {
-      enqueuePendingLead(payload);
-      try {
-        localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
-      } catch (e) {
-        /* no-op */
-      }
-      try {
-        localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
-      } catch (e) {
-        /* no-op */
-      }
-      exitLeadDesktopAndStartGame();
+    .catch((err) => {
+      console.error('Lead error:', err);
+      leadError.textContent = 'Error sending data. Please try again.';
+      leadPending = false;
+      leadSubmitButton.disabled = false;
+      if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'false';
     });
 }
 
@@ -1213,7 +1555,7 @@ function sendLeadToSheet(data){
     return Promise.resolve();
   }
   const formData = buildLeadFormData(data);
-  return fetchWithTimeout(LEAD_ENDPOINT, {
+  const networkPromise = fetchWithTimeout(LEAD_ENDPOINT, {
     method: 'POST',
     mode: 'cors',
     body: formData
@@ -1222,6 +1564,47 @@ function sendLeadToSheet(data){
       throw new Error('bad');
     }
     return response;
+  });
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let fallbackTimer = null;
+
+    const settleOnce = (fn) => (value) => {
+      if (settled) return;
+      settled = true;
+      if (fallbackTimer){
+        clearTimeout(fallbackTimer);
+      }
+      fn(value);
+    };
+
+    const resolveOnce = settleOnce(resolve);
+    const rejectOnce = settleOnce(reject);
+
+    fallbackTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        enqueuePendingLead(data);
+      } catch (e) {
+        /* no-op */
+      }
+      resolve();
+    }, 5000);
+
+    networkPromise.then(resolveOnce).catch((error) => {
+      if (error && error.name === 'AbortError'){
+        try {
+          enqueuePendingLead(data);
+        } catch (e) {
+          /* no-op */
+        }
+        resolveOnce();
+        return;
+      }
+      rejectOnce(error);
+    });
   });
 }
 
