@@ -247,8 +247,8 @@ const OIL_NO_OVERLAY_CONFIG = {
   offset: { x: 0, y: 0 },
   scale: 1.8
 };
-const MAGA_OVERLAY_POSITION = { x: WIDTH / -2, y: 450 };
-const OIL_OVERLAY_POSITION = { x: WIDTH / -2, y: 450 };
+const MAGA_OVERLAY_POSITION = { x: WIDTH / -30, y: 450 };
+const OIL_OVERLAY_POSITION = { x: WIDTH / -10, y: 450 };
 let hillaryVictoryPending = false;
 let hillaryVictoryTimeout = null;
 let playInputLocked = false;
