@@ -158,6 +158,7 @@ function setup() {
 
   initGame();
   setState(STATE_MENU);
+  warmLeadEndpoint();
 }
 function windowResized(){ fitCanvasCSS(); positionLeadUI(); }
 function fitCanvasCSS() {
@@ -1375,6 +1376,9 @@ function createLeadUI(){
   leadSubmitImage.alt = 'Submit';
   leadSubmitImage.dataset.disabled = 'false';
   leadSubmitImage.addEventListener('click', () => {
+    if (leadSubmitImage.dataset.disabled === 'true'){
+      return;
+    }
     if (!leadPending){
       leadForm.requestSubmit();
     }
@@ -1513,6 +1517,7 @@ function enterLeadDesktop(){
   if (leadOverlay){
     leadOverlay.style.display = 'flex';
     positionLeadUI();
+    warmLeadEndpoint();
     if (leadForm){
       leadForm.reset();
     }
@@ -1562,7 +1567,7 @@ function onLeadSubmit(event){
     return;
   }
   leadError.textContent = '';
-  leadSuccess.textContent = 'Sending...';
+  leadSuccess.textContent = 'SENDING…';
   leadPending = true;
   leadSubmitButton.disabled = true;
   if (leadSubmitImage) leadSubmitImage.dataset.disabled = 'true';
@@ -1577,18 +1582,33 @@ function onLeadSubmit(event){
     userAgent,
     timestamp: new Date().toISOString()
   };
-  sendLeadToSheet(payload)
-    .then(() => {
+  const totalAttempts = LEAD_SEND_ATTEMPTS;
+  sendLeadToSheet(payload, {
+    onAttempt: (attempt) => {
+      if (!leadSuccess) return;
+      if (attempt <= 1){
+        leadSuccess.textContent = 'SENDING…';
+      } else {
+        leadSuccess.textContent = `SENDING… RETRYING (${attempt}/${totalAttempts})…`;
+      }
+    }
+  })
+    .then((result) => {
       try {
         localStorage.setItem(LEAD_SUBMITTED_KEY, '1');
         localStorage.setItem(LEAD_STORAGE_KEY, JSON.stringify(payload));
       } catch (e) { /* no-op */ }
 
-      leadSuccess.textContent = 'Sent successfully!';
+      if (result && result.queued){
+        leadSuccess.textContent = 'CONNECTION SLOW—WE’LL FINISH IN THE BACKGROUND.';
+      } else {
+        leadSuccess.textContent = 'SENT SUCCESSFULLY!';
+      }
       setTimeout(exitLeadDesktopAndStartGame, 500);
     })
     .catch((err) => {
       console.error('Lead error:', err);
+      leadSuccess.textContent = '';
       leadError.textContent = 'Error sending data. Please try again.';
       leadPending = false;
       leadSubmitButton.disabled = false;
@@ -1620,62 +1640,106 @@ function fetchWithTimeout(url, opts = {}, ms = 4500){
   });
 }
 
-function sendLeadToSheet(data){
-  if (!LEAD_ENDPOINT || !isBrowser() || typeof FormData === 'undefined'){
-    return Promise.resolve();
-  }
-  const formData = buildLeadFormData(data);
-  const networkPromise = fetchWithTimeout(LEAD_ENDPOINT, {
-    method: 'POST',
-    mode: 'cors',
-    body: formData
-  }, 4500).then(response => {
-    if (!response.ok){
-      throw new Error('bad');
-    }
-    return response;
-  });
+function warmLeadEndpoint(){
+  if (!LEAD_ENDPOINT || !isBrowser()) return Promise.resolve();
+  console.debug('[Lead] Warming endpoint');
+  return fetchWithTimeout(LEAD_ENDPOINT, {
+    method: 'GET',
+    mode: 'no-cors',
+    cache: 'no-store'
+  }, 2000).catch(() => undefined);
+}
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let fallbackTimer = null;
+function delay(ms){
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-    const settleOnce = (fn) => (value) => {
-      if (settled) return;
-      settled = true;
-      if (fallbackTimer){
-        clearTimeout(fallbackTimer);
-      }
-      fn(value);
-    };
-
-    const resolveOnce = settleOnce(resolve);
-    const rejectOnce = settleOnce(reject);
-
-    fallbackTimer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
+async function retryingFetch(url, options, { attempts = 3, baseDelay = 500, timeoutMs = 4500, onAttempt } = {}){
+  let lastError = null;
+  for (let i = 0; i < attempts; i++){
+    const attemptNumber = i + 1;
+    if (typeof onAttempt === 'function'){
       try {
-        enqueuePendingLead(data);
+        onAttempt(attemptNumber, attempts);
       } catch (e) {
         /* no-op */
       }
-      resolve();
-    }, 5000);
+    }
+    console.info(`[Lead] Attempt ${attemptNumber}/${attempts} to ${url}`);
+    try {
+      const response = await fetchWithTimeout(url, options, timeoutMs);
+      if (response.ok){
+        console.info(`[Lead] Attempt ${attemptNumber} succeeded`);
+        return response;
+      }
+      const status = response.status;
+      const retryableStatus = status >= 500 || status === 429 || status === 403 || status === 0;
+      if (!retryableStatus && status >= 400){
+        const error = new Error(`HTTP ${status}`);
+        error.response = response;
+        error.nonRetryable = true;
+        throw error;
+      }
+      lastError = new Error(`HTTP ${status}`);
+      lastError.response = response;
+      console.warn(`[Lead] Attempt ${attemptNumber} failed with status ${status}`);
+    } catch (err) {
+      const isAbort = err && err.name === 'AbortError';
+      const isTypeError = err instanceof TypeError;
+      const response = err?.response;
+      if (err && err.nonRetryable){
+        throw err;
+      }
+      if (!isAbort && !isTypeError && !response){
+        throw err;
+      }
+      lastError = err;
+      console.warn(`[Lead] Attempt ${attemptNumber} encountered ${err?.name || err}`);
+    }
 
-    networkPromise.then(resolveOnce).catch((error) => {
-      if (error && error.name === 'AbortError'){
+    if (attemptNumber < attempts){
+      const delayMs = baseDelay * Math.pow(2, i) + Math.floor(Math.random() * 200);
+      console.debug(`[Lead] Waiting ${delayMs}ms before retry`);
+      await delay(delayMs);
+    }
+  }
+  throw lastError || new Error('Failed to fetch');
+}
+
+const LEAD_SEND_ATTEMPTS = 3;
+
+function sendLeadToSheet(data, { onAttempt, enqueueOnFail = true } = {}){
+  if (!LEAD_ENDPOINT || !isBrowser() || typeof FormData === 'undefined'){
+    return Promise.resolve({ queued: true });
+  }
+  const formData = buildLeadFormData(data);
+  const attempts = LEAD_SEND_ATTEMPTS;
+  return retryingFetch(LEAD_ENDPOINT, {
+    method: 'POST',
+    mode: 'cors',
+    body: formData
+  }, {
+    attempts,
+    baseDelay: 600,
+    timeoutMs: 5000,
+    onAttempt
+  }).then((response) => ({ queued: false, response }))
+    .catch((error) => {
+      if (error && error.nonRetryable){
+        console.error('[Lead] Non-retryable response', error);
+        throw error;
+      }
+      console.warn('[Lead] Enqueuing lead due to retry exhaustion');
+      if (enqueueOnFail){
         try {
           enqueuePendingLead(data);
         } catch (e) {
           /* no-op */
         }
-        resolveOnce();
-        return;
+        console.warn('Lead queued for later flush');
       }
-      rejectOnce(error);
+      return { queued: true, error };
     });
-  });
 }
 
 function buildLeadFormData(data = {}){
@@ -1726,7 +1790,7 @@ function enqueuePendingLead(payload){
   }
 }
 
-function flushPendingLeads(){
+async function flushPendingLeads(){
   if (!isBrowser() || !LEAD_ENDPOINT) return Promise.resolve();
   let queue = [];
   try {
@@ -1741,16 +1805,34 @@ function flushPendingLeads(){
   if (!queue.length){
     return Promise.resolve();
   }
-  const next = queue[0];
-  return sendLeadToSheet(next).then(() => {
-    queue.shift();
+  console.info(`[Lead] Flushing ${queue.length} pending lead(s)`);
+  const remaining = [];
+  for (let i = 0; i < queue.length; i++){
+    const payload = queue[i];
     try {
-      localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(queue));
-    } catch (err) {
-      /* no-op */
+      const result = await sendLeadToSheet(payload, { enqueueOnFail: false });
+      if (result && result.queued){
+        console.warn('[Lead] Flush attempt could not reach endpoint, keeping lead queued');
+        remaining.push(payload);
+      } else {
+        console.info(`[Lead] Flushed lead ${i + 1}/${queue.length}`);
+      }
+    } catch (error) {
+      console.warn('[Lead] Flush error, keeping lead for later', error);
+      remaining.push(payload);
     }
-    return flushPendingLeads();
-  }).catch(() => Promise.resolve());
+  }
+  try {
+    localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(remaining));
+  } catch (err) {
+    /* no-op */
+  }
+  if (remaining.length){
+    console.info(`[Lead] ${remaining.length} lead(s) remain queued`);
+  } else {
+    console.info('[Lead] Lead queue is empty after flush');
+  }
+  return Promise.resolve();
 }
 
 function shouldShowLeadDesktop(){
