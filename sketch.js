@@ -435,7 +435,7 @@ function resetGame(){
   clearHillaryVictoryTimeout();
   hillaryVictoryPending = false;
   playInputLocked = false;
-  dropOverlay = null;
+  clearDropOverlay();
   interactables.forEach(obj => {
     obj.x = obj.homeX;
     obj.y = obj.homeY;
@@ -791,6 +791,10 @@ function drawDropOverlays(){
   pop();
 }
 
+function clearDropOverlay(){
+  dropOverlay = null;
+}
+
 function spawnDropOverlay(img, x, y, w, h){
   if (!img) return;
   const baseW = (typeof w === 'number' && !Number.isNaN(w)) ? w : (img.width || 0);
@@ -973,6 +977,7 @@ function mouseReleased(){
   const dropH = obj.h;
   const droppedInside = pointInRect(obj.x, obj.y, getBabyHitbox());
   if (droppedInside){
+    clearDropOverlay();
     if (obj.key === 'hillary'){
       obj.x = obj.homeX;
       obj.y = obj.homeY;
@@ -1132,6 +1137,7 @@ function enterStateVictory(){
   stopSound('happy');
   stopMusic();
   playSound('victory');
+  clearDropOverlay();
 }
 function exitStateVictory(){}
 
@@ -1151,6 +1157,7 @@ function enterStateLose(){
     loseVideo.play();
   }
   loseVideoActive = hasVideo;
+  clearDropOverlay();
 }
 function exitStateLose(){
   if (loseVideo){
